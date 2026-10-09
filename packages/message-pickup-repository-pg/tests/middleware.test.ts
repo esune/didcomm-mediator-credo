@@ -60,6 +60,7 @@ describe('pickup middleware', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
     socket.send.mockReset()
+    socket.type = 'WebSocket'
     agent.messagePickup.getLiveModeSession.mockReset()
     query.mockResolvedValue({ rows: [], rowCount: 0 })
     repository = new PostgresMessagePickupRepository({
@@ -106,6 +107,17 @@ describe('pickup middleware', () => {
 
     expect(next).toHaveBeenCalledTimes(1)
     expect(saveLiveSession).not.toHaveBeenCalled()
+  })
+
+  it('responds to HTTP pings without creating an implicit WebSocket live session', async () => {
+    socket.type = 'Http'
+    const next = vi.fn()
+
+    await middleware()(context('https://didcomm.org/trust_ping/1.0/ping'), next)
+
+    expect(next).toHaveBeenCalledTimes(1)
+    expect(saveLiveSession).not.toHaveBeenCalled()
+    expect(repository.takeFromQueue).not.toHaveBeenCalled()
   })
 
   it('deletes only successfully written messages and releases the failed remainder', async () => {

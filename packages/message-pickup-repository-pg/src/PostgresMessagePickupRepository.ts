@@ -271,7 +271,8 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
               await next()
 
-              if (shouldCreateLiveSession) {
+              const transportSession = transportService.findSessionByConnectionId(connectionId)
+              if (shouldCreateLiveSession && transportSession?.type === 'WebSocket') {
                 await pickupSessionService.saveLiveSession(options.agent.context, {
                   connectionId: connectionId,
                   protocolVersion: 'v2',
@@ -281,7 +282,6 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
               }
               await this.sessionJobs.get(connectionId)
 
-              const transportSession = transportService.findSessionByConnectionId(connectionId)
               if (transportSession?.type !== 'WebSocket') return
 
               // Implicit pickup needs to manually deliver messages from the queue
