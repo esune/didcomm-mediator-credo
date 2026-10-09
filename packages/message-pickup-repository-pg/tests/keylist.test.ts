@@ -51,6 +51,7 @@ describe('keylist reassignment', () => {
       theirDid: 'did:peer:recipient',
       state: DidExchangeState.Completed,
       isReady: true,
+      getTag: vi.fn(),
     },
     message: {
       type: 'https://didcomm.org/coordinate-mediation/1.0/keylist-update',
