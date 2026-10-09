@@ -1,3 +1,19 @@
+diff --git a/build/agent/MessageSender.js b/build/agent/MessageSender.js
+index 1abaec12988bcb4fd727a048a8394e000fcb6306..d42a64aedeb5b630dc88a5a07a0f4d5c7f7b33b3 100644
+--- a/build/agent/MessageSender.js
++++ b/build/agent/MessageSender.js
+@@ -100,10 +100,9 @@ let MessageSender = class MessageSender {
+                             endpoint: service.serviceEndpoint,
+                             connectionId: connection.id,
+                         });
+-                        break;
++                        return;
+                     }
+                 }
+-                return;
+             }
+             catch (error) {
+                 this.logger.debug(`Sending outbound message to service with id ${service.id} failed with the following error:`, {
 diff --git a/build/agent/TransportService.js b/build/agent/TransportService.js
 index 3a9174f399c78d9712f5ca67ada9a42de347610e..6f4fd058c17d66a6b194fe95f167e5c54dac980a 100644
 --- a/build/agent/TransportService.js
