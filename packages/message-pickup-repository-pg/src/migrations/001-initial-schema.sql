@@ -1,7 +1,7 @@
 -- Create new type
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'message_state') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'message_state' AND typnamespace = current_schema()::regnamespace) THEN
     CREATE TYPE message_state AS ENUM ('pending', 'sending');
   END IF;
 END$$;

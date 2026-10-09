@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { Pool, escapeIdentifier } from 'pg'
@@ -88,5 +88,24 @@ describe.skipIf(!connectionString)('PostgreSQL migrations', () => {
     await expect(
       buildPgDatabaseWithMigrations(undefined, config, database, path.join(directory, 'missing'))
     ).rejects.toThrow('Migrations directory not found')
+  })
+
+  it('does not mistake an enum in another schema for its own type', async () => {
+    const initial = await readFile(path.join(__dirname, '../src/migrations/001-initial-schema.sql'), 'utf8')
+    await writeFile(
+      path.join(directory, '001-initial.sql'),
+      `CREATE SCHEMA other; CREATE TYPE other.message_state AS ENUM ('pending', 'sending');\n${initial}`
+    )
+
+    await buildPgDatabaseWithMigrations(undefined, config, database, directory)
+
+    const pool = new Pool({ ...config, database })
+    try {
+      expect((await pool.query("SELECT to_regtype('public.message_state') AS type_name")).rows[0].type_name).toBe(
+        'message_state'
+      )
+    } finally {
+      await pool.end()
+    }
   })
 })
