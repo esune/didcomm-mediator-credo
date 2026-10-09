@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { Logger } from '@credo-ts/core'
-import { Client, Pool } from 'pg'
+import { Client, Pool, type PoolClient, escapeIdentifier } from 'pg'
 
 /**
  * Runs all pending SQL migrations in a target PostgreSQL database.
@@ -19,35 +19,38 @@ export async function buildPgDatabaseWithMigrations(
   targetDatabase: string,
   migrationsDir: string = path.resolve(__dirname, '../migrations')
 ): Promise<void> {
+  if (!fs.existsSync(migrationsDir)) throw new Error(`Migrations directory not found: ${migrationsDir}`)
   const adminClient = new Client(postgresConfig)
 
   try {
     await adminClient.connect()
+    await adminClient.query('SELECT pg_advisory_lock(hashtext($1))', [`credo:pickup:database:${targetDatabase}`])
 
     // Try to create the target database if it doesn't exist
     const existsResult = await adminClient.query('SELECT 1 FROM pg_database WHERE datname = $1', [targetDatabase])
 
     if (existsResult.rowCount === 0) {
-      await adminClient.query(`CREATE DATABASE ${targetDatabase}`)
+      await adminClient.query(`CREATE DATABASE ${escapeIdentifier(targetDatabase)}`)
       logger?.info(`[migration] Database "${targetDatabase}" created.`)
     } else {
       logger?.info(`[migration] Database "${targetDatabase}" already exists.`)
     }
-
-    await adminClient.end()
   } catch (error) {
     logger?.error(`[migration] Failed to create database "${targetDatabase}": ${(error as Error).message}`)
-    await adminClient.end()
     throw error
+  } finally {
+    await adminClient.end()
   }
 
   // Now connect to the target database using a pool
   const pool = new Pool({ ...postgresConfig, database: targetDatabase })
 
-  const client = await pool.connect()
+  let client: PoolClient | undefined
 
   try {
+    client = await pool.connect()
     await client.query('BEGIN')
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('credo:pickup:migrations'))")
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_version (
@@ -57,15 +60,8 @@ export async function buildPgDatabaseWithMigrations(
       )
     `)
 
-    const result = await client.query('SELECT version FROM schema_version ORDER BY id DESC LIMIT 1')
-    const currentVersion = result.rows.length > 0 ? result.rows[0].version : 0
-    logger?.info(`[migration] Current schema version: ${currentVersion}`)
-
-    if (!fs.existsSync(migrationsDir)) {
-      logger?.warn(`[migration] Migrations directory not found: ${migrationsDir}. Skipping.`)
-      await client.query('COMMIT')
-      return
-    }
+    const result = await client.query('SELECT version FROM schema_version')
+    const appliedVersions = new Set<number>(result.rows.map((row) => row.version))
 
     const files = fs
       .readdirSync(migrationsDir)
@@ -80,7 +76,7 @@ export async function buildPgDatabaseWithMigrations(
       }
 
       const version = Number.parseInt(versionMatch[1], 10)
-      if (version <= currentVersion) {
+      if (appliedVersions.has(version)) {
         logger?.debug(`[migration] Skipping already applied: ${file}`)
         continue
       }
@@ -91,6 +87,7 @@ export async function buildPgDatabaseWithMigrations(
       try {
         await client.query(sql)
         await client.query('INSERT INTO schema_version (version) VALUES ($1)', [version])
+        appliedVersions.add(version)
         logger?.info(`[migration] Applied successfully: ${file}`)
       } catch (fileErr) {
         throw new Error(`[migration] Failed to apply ${file}: ${(fileErr as Error).message}`)
@@ -100,9 +97,10 @@ export async function buildPgDatabaseWithMigrations(
     await client.query('COMMIT')
   } catch (err) {
     logger?.error(`[migration] Migration process failed: ${(err as Error).message}`)
-    await client.query('ROLLBACK')
+    if (client) await client.query('ROLLBACK')
+    throw err
   } finally {
-    client.release()
+    client?.release()
     await pool.end()
   }
 }
