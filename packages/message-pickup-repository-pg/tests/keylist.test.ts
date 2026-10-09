@@ -40,7 +40,7 @@ describe('keylist reassignment', () => {
       resolve: (token: { name: string }) =>
         token.name === 'MediationRepository'
           ? { findSingleByQuery: async () => record, getById: async () => record, update }
-          : { saveLiveSession: vi.fn() },
+          : { saveLiveSession: vi.fn(), findSessionByConnectionId: () => undefined },
     },
   }
   const context = () => ({
