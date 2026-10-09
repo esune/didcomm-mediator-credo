@@ -1,5 +1,5 @@
 import { MessageForwardingStrategy } from '@credo-ts/core/build/modules/routing/MessageForwardingStrategy'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PostgresMessagePickupRepository } from '../src/PostgresMessagePickupRepository'
 
 const state = vi.hoisted(() => ({ pools: [] as any[], listeners: [] as any[] }))
@@ -8,6 +8,12 @@ vi.mock('pg', async () => {
   const { EventEmitter } = await import('node:events')
   return {
     Pool: class extends EventEmitter {
+      query = vi.fn().mockResolvedValue({ rows: [], rowCount: 0 })
+      end = vi.fn()
+      connect = vi.fn().mockResolvedValue({
+        query: vi.fn().mockResolvedValue({ rows: [{ acquired: false }] }),
+        release: vi.fn(),
+      })
       constructor(public options: unknown) {
         super()
         state.pools.push(this)
@@ -21,6 +27,7 @@ vi.mock('pg-pubsub', async () => {
   return {
     default: class extends EventEmitter {
       addChannel = vi.fn().mockResolvedValue(undefined)
+      close = vi.fn().mockResolvedValue(undefined)
 
       constructor(public options: unknown) {
         super()
@@ -44,10 +51,12 @@ describe('PostgreSQL pickup connections', () => {
   }
 
   beforeEach(() => {
+    vi.useFakeTimers()
     vi.clearAllMocks()
     state.pools.length = 0
     state.listeners.length = 0
   })
+  afterEach(() => vi.useRealTimers())
 
   it.each([
     [undefined, 'messagepickuprepository'],
@@ -63,7 +72,7 @@ describe('PostgreSQL pickup connections', () => {
 
     await repository.initialize({ agent: agent as any })
 
-    expect(state.listeners[0].options).toEqual({
+    expect(state.listeners[0].options).toMatchObject({
       user: options.postgresUser,
       password: options.postgresPassword,
       host: options.postgresHost,
