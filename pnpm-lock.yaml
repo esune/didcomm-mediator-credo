@@ -13,7 +13,7 @@ patchedDependencies:
     hash: t4iys5lk2kufj3terrq7puvqiu
     path: patches/@credo-ts__core@0.5.19.patch
   '@credo-ts/node@0.5.19':
-    hash: e3zytxagob72tfuwtj4zm6ecwm
+    hash: 7a55fdzkbhzr4ahnq2vqnx7ibq
     path: patches/@credo-ts__node@0.5.19.patch
 
 importers:
@@ -37,7 +37,7 @@ importers:
         version: 0.5.19(patch_hash=t4iys5lk2kufj3terrq7puvqiu)(expo@56.0.12)(react-native@0.86.0(@babel/core@7.29.7)(react@19.2.7))(web-streams-polyfill@3.3.3)
       '@credo-ts/node':
         specifier: v0.5.19
-        version: 0.5.19(patch_hash=e3zytxagob72tfuwtj4zm6ecwm)(expo@56.0.12)(react-native@0.86.0(@babel/core@7.29.7)(react@19.2.7))(web-streams-polyfill@3.3.3)
+        version: 0.5.19(patch_hash=7a55fdzkbhzr4ahnq2vqnx7ibq)(expo@56.0.12)(react-native@0.86.0(@babel/core@7.29.7)(react@19.2.7))(web-streams-polyfill@3.3.3)
       '@openwallet-foundation/askar-nodejs':
         specifier: ^0.4.3
         version: 0.4.3
@@ -5563,7 +5563,7 @@ snapshots:
       - supports-color
       - web-streams-polyfill
 
-  '@credo-ts/node@0.5.19(patch_hash=e3zytxagob72tfuwtj4zm6ecwm)(expo@56.0.12)(react-native@0.86.0(@babel/core@7.29.7)(react@19.2.7))(web-streams-polyfill@3.3.3)':
+  '@credo-ts/node@0.5.19(patch_hash=7a55fdzkbhzr4ahnq2vqnx7ibq)(expo@56.0.12)(react-native@0.86.0(@babel/core@7.29.7)(react@19.2.7))(web-streams-polyfill@3.3.3)':
     dependencies:
       '@2060.io/ffi-napi': 4.0.9
       '@2060.io/ref-napi': 3.0.6

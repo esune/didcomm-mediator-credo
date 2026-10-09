@@ -54,6 +54,20 @@ describe('patched WebSocket transport', () => {
     expect(settled).toBe(true)
   })
 
+  it('contains protocol errors and terminates only the affected socket', async () => {
+    const server = new EventEmitter()
+    const socket = Object.assign(new EventEmitter(), { addEventListener: vi.fn(), terminate: vi.fn() })
+    const transport = new WsInboundTransport({ server: server as any })
+    await transport.start({
+      config: { logger, endpoints: ['ws://localhost'] },
+      dependencyManager: { resolve: () => ({ removeSession: vi.fn() }) },
+    } as any)
+    server.emit('connection', socket)
+
+    expect(() => socket.emit('error', new Error('invalid frame'))).not.toThrow()
+    expect(socket.terminate).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects callback errors without throwing outside the sender promise', async () => {
     const error = new Error('write failed')
     let complete: ((error?: Error) => void) | undefined
