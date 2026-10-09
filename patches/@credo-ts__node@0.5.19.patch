@@ -1,16 +1,22 @@
 diff --git a/build/transport/WsInboundTransport.js b/build/transport/WsInboundTransport.js
-index 37dfed0825ece973f87ea00485dc9b872f4cf467..182f16e0ba134b5c02e3e02c730cd3063aa07ad0 100644
+index 37dfed0825ece973f87ea00485dc9b872f4cf467..92d153700a4a417c65eff261a62c941f4b5cb802 100644
 --- a/build/transport/WsInboundTransport.js
 +++ b/build/transport/WsInboundTransport.js
-@@ -50,6 +50,7 @@ class WsInboundTransport {
+@@ -48,8 +48,13 @@ class WsInboundTransport {
+                 this.socketIds[socketId] = socket;
+                 const session = new WebSocketTransportSession(socketId, socket, this.logger);
                  this.listenOnWebSocketMessages(agent, socket, session);
++                socket.on('error', (error) => {
++                    this.logger.error(`WebSocket connection error: ${error}`);
++                    socket.terminate();
++                });
                  socket.on('close', () => {
                      this.logger.debug('Socket closed.');
 +                    delete this.socketIds[socketId];
                      transportService.removeSession(session);
                  });
              }
-@@ -101,14 +102,17 @@ class WebSocketTransportSession {
+@@ -101,14 +106,17 @@ class WebSocketTransportSession {
          if (this.socket.readyState !== ws_1.default.OPEN) {
              throw new core_1.CredoError(`${this.type} transport session has been closed.`);
          }
