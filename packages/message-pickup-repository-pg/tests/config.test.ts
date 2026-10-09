@@ -34,6 +34,15 @@ describe('PostgreSQL connection controls', () => {
     })
   })
 
+  it.each([
+    ['localhost:55432', 'localhost', 55432],
+    ['[::1]:55432', '::1', 55432],
+    ['::1', '::1', 5432],
+    ['/var/run/postgresql', '/var/run/postgresql', 5432],
+  ] as const)('preserves connection address %s', (postgresHost, host, port) => {
+    expect(postgresConnectionConfig({ ...options, postgresHost })).toMatchObject({ host, port })
+  })
+
   it.each([{ postgresPort: 0 }, { postgresMaxConnections: 0 }, { postgresStatementTimeoutMillis: -1 }])(
     'rejects invalid settings %j',
     (settings) => {

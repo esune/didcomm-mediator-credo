@@ -61,6 +61,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
     this.postgresHost = postgresHost
     this.postgresDatabaseName = postgresDatabaseName || 'messagepickuprepository'
     this.connectionConfig = postgresConnectionConfig(options)
+    this.postgresHost = this.connectionConfig.host as string
     this.maxPickupBatchSize = options.maxPickupBatchSize ?? 100
     if (!Number.isSafeInteger(this.maxPickupBatchSize) || this.maxPickupBatchSize < 1 || this.maxPickupBatchSize > 10000) {
       throw new Error('maxPickupBatchSize must be an integer between 1 and 10000')

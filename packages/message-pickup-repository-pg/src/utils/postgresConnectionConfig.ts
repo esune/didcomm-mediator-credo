@@ -1,8 +1,17 @@
+import { isIP } from 'node:net'
 import type { PoolConfig } from 'pg'
 import type { PostgresMessagePickupRepositoryConfig } from '../interfaces'
 
 export function postgresConnectionConfig(options: PostgresMessagePickupRepositoryConfig): PoolConfig {
-  const port = options.postgresPort ?? 5432
+  const rawHost = options.postgresHost
+  const address = rawHost.startsWith('/')
+    ? undefined
+    : new URL(`postgres://${isIP(rawHost) === 6 ? `[${rawHost}]` : rawHost}`)
+  if (address && (address.username || address.password || (address.pathname && address.pathname !== '/'))) {
+    throw new Error('postgresHost must contain only a hostname and optional port')
+  }
+  const host = address?.hostname.startsWith('[') ? address.hostname.slice(1, -1) : (address?.hostname ?? rawHost)
+  const port = options.postgresPort ?? Number(address?.port || 5432)
   const max = options.postgresMaxConnections ?? 10
   const connectionTimeoutMillis = options.postgresConnectionTimeoutMillis ?? 10000
   const statementTimeout = options.postgresStatementTimeoutMillis ?? 30000
@@ -17,7 +26,7 @@ export function postgresConnectionConfig(options: PostgresMessagePickupRepositor
     }
   }
   return {
-    host: options.postgresHost,
+    host,
     user: options.postgresUser,
     password: options.postgresPassword,
     database: options.postgresDatabaseName || 'messagepickuprepository',
