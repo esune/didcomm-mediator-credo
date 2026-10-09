@@ -25,31 +25,36 @@ async function createMediatorInvitation(agent: Agent) {
   })
 }
 
-void createAgent().then(async (agent) => {
-  agent.config.logger.info('Agent started')
+void createAgent()
+  .then(async (agent) => {
+    agent.config.logger.info('Agent started')
 
-  if (config.get('agent:recreateInvitation')) {
-    agent.config.logger.info('Recreating out of band invitation')
-    const outOfBandRecord = await createMediatorInvitation(agent)
-    return logInvitationUrl(agent, outOfBandRecord)
-  }
+    if (config.get('agent:recreateInvitation')) {
+      agent.config.logger.info('Recreating out of band invitation')
+      const outOfBandRecord = await createMediatorInvitation(agent)
+      return logInvitationUrl(agent, outOfBandRecord)
+    }
 
-  const oobRepo = agent.dependencyManager.resolve(OutOfBandRepository)
-  const outOfBandRecords = await oobRepo.findByQuery(agent.context, {
-    state: OutOfBandState.AwaitResponse,
-    role: OutOfBandRole.Sender,
+    const oobRepo = agent.dependencyManager.resolve(OutOfBandRepository)
+    const outOfBandRecords = await oobRepo.findByQuery(agent.context, {
+      state: OutOfBandState.AwaitResponse,
+      role: OutOfBandRole.Sender,
+    })
+
+    let outOfBandRecord = outOfBandRecords
+      .filter((oobRecord) => oobRecord.reusable)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]
+
+    if (outOfBandRecord) {
+      agent.config.logger.info('Reusing existing out of band invitation')
+    } else {
+      agent.config.logger.warn('No reusable out of band invitation found, creating a new one')
+      outOfBandRecord = await createMediatorInvitation(agent)
+    }
+
+    logInvitationUrl(agent, outOfBandRecord)
   })
-
-  let outOfBandRecord = outOfBandRecords
-    .filter((oobRecord) => oobRecord.reusable)
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]
-
-  if (outOfBandRecord) {
-    agent.config.logger.info('Reusing existing out of band invitation')
-  } else {
-    agent.config.logger.warn('No reusable out of band invitation found, creating a new one')
-    outOfBandRecord = await createMediatorInvitation(agent)
-  }
-
-  logInvitationUrl(agent, outOfBandRecord)
-})
+  .catch((error) => {
+    console.error('Mediator startup failed', error)
+    process.exitCode = 1
+  })

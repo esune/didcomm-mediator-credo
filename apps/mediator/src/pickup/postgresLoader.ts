@@ -5,7 +5,6 @@ import { Logger } from '../logger'
 import { PickupLoader } from './loader'
 
 const logger = new Logger(config.get('agent:logLevel'))
-let messagePickupRepository : PostgresMessagePickupRepository | undefined = undefined
 
 type DbConfig = {
   host: string
@@ -47,7 +46,7 @@ export class PostgresPickupLoader extends PickupLoader {
   async load(): Promise<PostgresMessagePickupRepository> {
     logger.info('Loading Postgres message pickup repository...')
     const databaseConfig = this.getDatabaseConfig()
-    messagePickupRepository = new PostgresMessagePickupRepository({
+    const messagePickupRepository = new PostgresMessagePickupRepository({
       postgresHost: databaseConfig.host,
       postgresUser: databaseConfig.user,
       postgresPassword: databaseConfig.password,
@@ -57,18 +56,3 @@ export class PostgresPickupLoader extends PickupLoader {
     return messagePickupRepository
   }
 }
-
-process.on('SIGTERM', () => {
-  messagePickupRepository?.cleanupLiveSessionsAndExit()
-})
-process.on('SIGINT', () => {
-  messagePickupRepository?.cleanupLiveSessionsAndExit()
-})
-
-process.on('uncaughtException', async (err) => {
-  logger.fatal('Uncaught Exception:', err)
-
-  messagePickupRepository?.cleanupLiveSessionsAndExit()
-
-  process.exit(1)
-})

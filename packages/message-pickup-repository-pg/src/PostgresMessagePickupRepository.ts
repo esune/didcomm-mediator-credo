@@ -48,6 +48,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
   private postgresPassword: string
   private postgresHost: string
   private postgresDatabaseName: string
+  private shutdownJob?: Promise<void>
 
   public constructor(options: PostgresMessagePickupRepositoryConfig) {
     const { logger, postgresUser, postgresPassword, postgresHost, postgresDatabaseName } = options
@@ -555,7 +556,30 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
   public async shutdown() {
     this.logger?.info('[shutdown] Close connection to postgres')
-    await this.messagesCollection?.end()
+    this.shutdownJob ??= this.closeConnections()
+    await this.shutdownJob
+  }
+
+  private async closeConnections(): Promise<void> {
+    try {
+      await this.messagesCollection?.query('DELETE FROM live_session WHERE instance = $1', [this.instanceName])
+    } finally {
+      try {
+        await this.messagesCollection?.end()
+      } finally {
+        await this.pubSubInstance.close()
+      }
+    }
+  }
+
+  public async isReady(): Promise<boolean> {
+    if (!this.messagesCollection || this.shutdownJob) return false
+    try {
+      await this.messagesCollection.query('SELECT 1')
+      return true
+    } catch {
+      return false
+    }
   }
 
   /**
@@ -817,20 +841,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
   }
 
   public async cleanupLiveSessionsAndExit(): Promise<void> {
-    this.logger?.info('[cleanupLiveSessions] Cleaning up expired live sessions from the database.')
-    try {
-      const query = 'DELETE FROM live_session WHERE instance = $1'
-
-      const queryParams = [this.instanceName]
-
-      await this.messagesCollection?.query(query, queryParams)
-
-      this.logger?.debug(`[cleanupLiveSessions] removed all live session for ${this.instanceName}`)
-    } catch (error) {
-      this.logger?.error(`[cleanupLiveSessions] Error removing live sessions on ${this.instanceName}: ${error}`)
-    } finally {
-      process.exit(0)
-    }
+    await this.shutdown()
   }
 }
 

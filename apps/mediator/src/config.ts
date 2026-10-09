@@ -37,6 +37,7 @@ nconf.overrides({
   },
   agent: {
     port: agentPort,
+    wsHeartbeatSeconds: Number(process.env.WS_HEARTBEAT_SECONDS ?? 30),
     endpoints: process.env.AGENT_ENDPOINTS
       ? process.env.AGENT_ENDPOINTS.split(',')
       : [`http://localhost:${agentPort}`, `ws://localhost:${agentPort}`],

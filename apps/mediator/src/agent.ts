@@ -13,18 +13,20 @@ import {
   type WalletConfig,
   WsOutboundTransport,
 } from '@credo-ts/core'
-import { HttpInboundTransport, WsInboundTransport, agentDependencies } from '@credo-ts/node'
+import { HttpInboundTransport, agentDependencies } from '@credo-ts/node'
 import { askar } from '@openwallet-foundation/askar-nodejs'
 
 import express from 'express'
 import { Server } from 'ws'
 
+import { ManagedWsInboundTransport } from './ManagedWsInboundTransport'
 import config from './config'
 import { askarPostgresConfig } from './database'
 import { Logger } from './logger'
 import { loadPickup } from './pickup/loader'
 import { PushNotificationsFcmModule } from './push-notifications/fcm'
 import { initializeFirebase } from './push-notifications/fcm/firebase'
+import { createShutdownTask, installShutdownHandlers, isAgentReady } from './runtime'
 import { StorageMessageQueueModule } from './storage/StorageMessageQueueModule'
 
 function createModules(messagePickupRepository?: MessagePickupRepository) {
@@ -117,7 +119,7 @@ export async function createAgent() {
   // Create all transports
   const httpInboundTransport = new HttpInboundTransport({ app, port: config.get('agent:port') })
   const httpOutboundTransport = new HttpOutboundTransport()
-  const wsInboundTransport = new WsInboundTransport({ server: socketServer })
+  const wsInboundTransport = new ManagedWsInboundTransport(socketServer, config.get('agent:wsHeartbeatSeconds'))
   const wsOutboundTransport = new WsOutboundTransport()
 
   // Register all Transports
@@ -125,10 +127,30 @@ export async function createAgent() {
   agent.registerOutboundTransport(httpOutboundTransport)
   agent.registerInboundTransport(wsInboundTransport)
   agent.registerOutboundTransport(wsOutboundTransport)
+  let shuttingDown = false
+  const shutdown = createShutdownTask(
+    async () => {
+      shuttingDown = true
+      await agent.shutdown()
+    },
+    async () => {
+      await messagePickupRepository?.shutdown()
+    }
+  )
+  const removeShutdownHandlers = installShutdownHandlers(async () => {
+    try {
+      await shutdown()
+    } finally {
+      removeShutdownHandlers()
+    }
+  }, logger)
 
   // Added health check endpoint
   httpInboundTransport.app.get('/health', async (_req, res) => {
     res.sendStatus(202)
+  })
+  httpInboundTransport.app.get('/ready', async (_req, res) => {
+    res.sendStatus(!shuttingDown && (await isAgentReady(agent, messagePickupRepository)) ? 200 : 503)
   })
 
   httpInboundTransport.app.get('/invite', async (req, res) => {
@@ -149,11 +171,19 @@ export async function createAgent() {
     return res.send(outOfBandRecord.outOfBandInvitation.toJSON())
   })
 
-  if (messagePickupRepository) {
-    await messagePickupRepository.initialize({ agent })
+  try {
+    if (messagePickupRepository) await messagePickupRepository.initialize({ agent })
+    await initializeFirebase(agent)
+    await agent.initialize()
+  } catch (error) {
+    try {
+      await shutdown()
+    } catch (cleanupError) {
+      logger.error('Failed to clean up unsuccessful initialization', { cause: cleanupError })
+    }
+    removeShutdownHandlers()
+    throw error
   }
-
-  await agent.initialize()
 
   httpInboundTransport.server?.on('listening', () => {
     logger.info(`Agent listening on port ${config.get('agent:port')}`)
@@ -174,8 +204,6 @@ export async function createAgent() {
       socketServer.emit('connection', socket, request)
     })
   })
-
-  await initializeFirebase(agent)
 
   return agent
 }
