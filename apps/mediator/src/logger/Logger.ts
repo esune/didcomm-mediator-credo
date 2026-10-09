@@ -34,7 +34,26 @@ export class Logger extends BaseLogger {
     if (!this.isEnabled(level)) return
 
     if (data) {
-      this.logger[tsLogLevel](message, JSON.parse(JSON.stringify(data, replaceError, 2)))
+      let safeData: unknown
+      try {
+        const seen = new WeakSet<object>()
+        safeData = JSON.parse(
+          JSON.stringify(data, (key, value) => {
+            if (/password|secret|private[-_]?key|authorization|token/i.test(key) || key.toLowerCase() === 'key') {
+              return '[REDACTED]'
+            }
+            if (typeof value === 'bigint') return value.toString()
+            if (value && typeof value === 'object') {
+              if (seen.has(value)) return '[Circular]'
+              seen.add(value)
+            }
+            return replaceError(key, value)
+          }) ?? '{}'
+        )
+      } catch {
+        safeData = { logDataSerializationFailed: true }
+      }
+      this.logger[tsLogLevel](message, safeData)
     } else {
       this.logger[tsLogLevel](message)
     }

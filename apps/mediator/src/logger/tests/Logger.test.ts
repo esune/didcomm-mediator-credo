@@ -50,4 +50,47 @@ describe('Logger', () => {
 
     expect(debug).not.toHaveBeenCalled()
   })
+
+  it('does not throw for circular SDK error contexts or bigint fields', () => {
+    const warn = vi.spyOn(TSLogger.prototype, 'warn').mockReturnValue({} as never)
+    const logger = new Logger(LogLevel.warn)
+    const context: Record<string, unknown> = { count: BigInt(1) }
+    context.self = context
+    const error = Object.assign(new Error('delivery failed'), { context })
+
+    expect(() => logger.warn('failure', { cause: error })).not.toThrow()
+    expect(warn).toHaveBeenCalledWith('failure', {
+      cause: expect.objectContaining({ context: { count: '1', self: '[Circular]' } }),
+    })
+  })
+
+  it('redacts credential fields in SDK contexts', () => {
+    const info = vi.spyOn(TSLogger.prototype, 'info').mockReturnValue({} as never)
+    const logger = new Logger(LogLevel.info)
+
+    logger.info('context', {
+      walletConfig: { key: 'wallet-secret', password: 'database-secret' },
+      deviceToken: 'token',
+    })
+
+    expect(info).toHaveBeenCalledWith('context', {
+      walletConfig: { key: '[REDACTED]', password: '[REDACTED]' },
+      deviceToken: '[REDACTED]',
+    })
+  })
+
+  it('does not let failing serialization interrupt message processing', () => {
+    const error = vi.spyOn(TSLogger.prototype, 'error').mockReturnValue({} as never)
+    const logger = new Logger(LogLevel.error)
+
+    expect(() =>
+      logger.error('failure', {
+        toJSON: () => {
+          throw new Error('cannot serialize')
+        },
+      })
+    ).not.toThrow()
+
+    expect(error).toHaveBeenCalledWith('failure', { logDataSerializationFailed: true })
+  })
 })
