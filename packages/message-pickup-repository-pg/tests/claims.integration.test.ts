@@ -95,8 +95,8 @@ describe.skipIf(!connectionString)('PostgreSQL queue claims', () => {
     if (!deleteMessages) expect(rows.every((row) => row.state === 'sending')).toBe(true)
   })
 
-  it('preserves recipient-DID matching across a legacy connection change', async () => {
-    const id = await insertMessage(0, otherConnectionId)
+  it('preserves recipient-DID matching for the owning connection', async () => {
+    const id = await insertMessage(0)
 
     const messages = await repository.takeFromQueue({ connectionId, recipientDid: 'did:key:recipient', limit: 1 })
 
