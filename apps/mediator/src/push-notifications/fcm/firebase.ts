@@ -28,13 +28,22 @@ const setupFirebaseSender = async (agent: Agent) => {
       'Initializing push notification sender on queued messages for postgres pickup type and queue and live mode delivery strategy'
     )
     agent.events.on(MessageQueuedEventType, async (data) => {
-      const { message } = data.payload as unknown as MessageQueuedEvent
-      const pushNotificationRecord = await agent.modules.pushNotificationsFcm.getPushNotificationRecordByConnectionId(
-        message.connectionId
-      )
-      if (pushNotificationRecord?.deviceToken) {
-        const repository = agent.dependencyManager.resolve(PushNotificationsFcmRepository)
-        sendFcmPushNotification(agent.context, repository, pushNotificationRecord, agent.config.logger as Logger)
+      try {
+        const { message } = data.payload as unknown as MessageQueuedEvent
+        const pushNotificationRecord = await agent.modules.pushNotificationsFcm.getPushNotificationRecordByConnectionId(
+          message.connectionId
+        )
+        if (pushNotificationRecord?.deviceToken) {
+          const repository = agent.dependencyManager.resolve(PushNotificationsFcmRepository)
+          await sendFcmPushNotification(
+            agent.context,
+            repository,
+            pushNotificationRecord,
+            agent.config.logger as Logger
+          )
+        }
+      } catch (error) {
+        agent.config.logger.error('Error handling queued-message push notification', { cause: error })
       }
     })
   }

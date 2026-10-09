@@ -54,27 +54,36 @@ export const sendFcmPushNotification = async (
 
   // If attempt fails or no projectId specified, try all available firebase apps
   for (const [projectId, firebase] of filteredFirebaseApps) {
+    let response: string
     try {
       logger.debug(`Sending push notification using Firebase projectId: ${projectId}`)
-      const response = await firebase.messaging().send({
+      response = await firebase.messaging().send({
         token: pushNotificationRecord.deviceToken,
         notification: {
           title,
           body,
         },
       })
-      if (response) {
-        logger.info('Push notification sent successfully', { projectId, response })
-        pushNotificationRecord.firebaseProjectId = projectId // Update record with working projectId
-        await repository.update(agentContext, pushNotificationRecord)
-        return response
-      }
     } catch (error) {
       if (isFirebaseLikeError(error)) {
         logger.debug('Error sending notification', { cause: error })
       } else {
         logger.error('Unexpected error sending push notification', { cause: error })
       }
+      continue
     }
+
+    if (!response) continue
+
+    logger.info('Push notification sent successfully', { projectId, response })
+    if (pushNotificationRecord.firebaseProjectId !== projectId) {
+      pushNotificationRecord.firebaseProjectId = projectId
+      try {
+        await repository.update(agentContext, pushNotificationRecord)
+      } catch (error) {
+        logger.error('Error persisting Firebase project after successful push notification', { cause: error })
+      }
+    }
+    return response
   }
 }

@@ -24,6 +24,8 @@ describe('sendFcmPushNotification', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockMessagingSend.mockReset()
+    mockRepository.update.mockReset()
 
     // Reset firebaseApps map
     firebaseApps.clear()
@@ -82,7 +84,7 @@ describe('sendFcmPushNotification', () => {
 
     const record = {
       deviceToken: 'abc',
-      firebaseProjectId: 'proj1',
+      firebaseProjectId: undefined,
     } as any
 
     const result = await sendFcmPushNotification(agentContext, mockRepository as any, record, mockLogger as any)
@@ -92,6 +94,40 @@ describe('sendFcmPushNotification', () => {
     expect(mockRepository.update).toHaveBeenCalled()
     expect(result).toBe('mock-response')
     expect(record.firebaseProjectId).toBe('proj1')
+  })
+
+  it('does not rewrite a record with an unchanged project', async () => {
+    mockMessagingSend.mockResolvedValueOnce('mock-response')
+
+    const result = await sendFcmPushNotification(
+      agentContext,
+      mockRepository as any,
+      { deviceToken: 'abc', firebaseProjectId: 'proj1' } as any,
+      mockLogger as any
+    )
+
+    expect(result).toBe('mock-response')
+    expect(mockRepository.update).not.toHaveBeenCalled()
+  })
+
+  it('does not send again when persistence fails after a successful push', async () => {
+    const error = new Error('database unavailable')
+    mockMessagingSend.mockResolvedValue('mock-response')
+    mockRepository.update.mockRejectedValueOnce(error)
+
+    const result = await sendFcmPushNotification(
+      agentContext,
+      mockRepository as any,
+      { deviceToken: 'abc', firebaseProjectId: undefined } as any,
+      mockLogger as any
+    )
+
+    expect(result).toBe('mock-response')
+    expect(mockMessagingSend).toHaveBeenCalledTimes(1)
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'Error persisting Firebase project after successful push notification',
+      { cause: error }
+    )
   })
 
   it('tries multiple apps if the first one throws', async () => {
