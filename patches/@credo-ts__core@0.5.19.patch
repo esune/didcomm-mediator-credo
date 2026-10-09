@@ -1,5 +1,5 @@
 diff --git a/build/agent/TransportService.js b/build/agent/TransportService.js
-index 3a9174f399c78d9712f5ca67ada9a42de347610e..6f4fd058c17d66a6b194fe95f167e5c54dac980a 100644
+index 3a9174f399c78d9712f5ca67ada9a42de347610e..0a8eb07823da4ec036e4fcde35d05d7566970117 100644
 --- a/build/agent/TransportService.js
 +++ b/build/agent/TransportService.js
 @@ -23,14 +23,17 @@ let TransportService = class TransportService {
@@ -28,6 +28,25 @@ index 3a9174f399c78d9712f5ca67ada9a42de347610e..6f4fd058c17d66a6b194fe95f167e5c5
          this.transportSessionTable[session.id] = session;
          this.eventEmitter.emit(this.agentContext, {
              type: transport_1.TransportEventTypes.TransportSessionSaved,
+@@ -40,7 +43,9 @@ let TransportService = class TransportService {
+         });
+     }
+     findSessionByConnectionId(connectionId) {
+-        return Object.values(this.transportSessionTable).find((session) => session?.connectionId === connectionId);
++        return Object.values(this.transportSessionTable).reverse().find((session) =>
++            session?.connectionId === connectionId && session.inboundMessage?.hasReturnRouting() &&
++            (session.type !== 'WebSocket' || !session.socket || session.socket.readyState === 1));
+     }
+     setConnectionIdForSession(sessionId, connectionId) {
+         const session = this.findSessionById(sessionId);
+@@ -57,6 +62,7 @@ let TransportService = class TransportService {
+         return this.transportSessionTable[sessionId];
+     }
+     removeSession(session) {
++        if (!this.transportSessionTable[session.id]) return;
+         delete this.transportSessionTable[session.id];
+         this.eventEmitter.emit(this.agentContext, {
+             type: transport_1.TransportEventTypes.TransportSessionRemoved,
 diff --git a/build/modules/connections/repository/ConnectionRepository.js b/build/modules/connections/repository/ConnectionRepository.js
 index fd33a992b65e1d70b116d256ca885075495f844c..50c477a580d009062ff97911eb80ecc3f6b2c78a 100644
 --- a/build/modules/connections/repository/ConnectionRepository.js
@@ -180,17 +199,56 @@ index 0bf95a866ec00be24d800c204ff0e20555056d83..cb3869f357a1bd3a2ae01677af12168c
      async storeCreatedDid(agentContext, { did, didDocument, tags }) {
          const didRecord = new DidRecord_1.DidRecord({
 diff --git a/build/modules/message-pickup/services/MessagePickupSessionService.js b/build/modules/message-pickup/services/MessagePickupSessionService.js
-index d004326423598fd18d4af8c77c02298cfae27e2e..13688231ae82f08afa7ddb1d062c5f49ad05a5dc 100644
+index d004326423598fd18d4af8c77c02298cfae27e2e..a83964f82991f67b48665c00264a3d55019042a3 100644
 --- a/build/modules/message-pickup/services/MessagePickupSessionService.js
 +++ b/build/modules/message-pickup/services/MessagePickupSessionService.js
-@@ -52,8 +52,8 @@ let MessagePickupSessionService = class MessagePickupSessionService {
+@@ -17,6 +17,7 @@ const plugins_1 = require("../../../plugins");
+ const transport_1 = require("../../../transport");
+ const uuid_1 = require("../../../utils/uuid");
+ const MessagePickupEvents_1 = require("../MessagePickupEvents");
++const TransportService_1 = require("../../../agent/TransportService");
+ /**
+  * @internal
+  * The Message Pickup session service keeps track of all {@link MessagePickupSession}
+@@ -38,7 +39,9 @@ let MessagePickupSessionService = class MessagePickupSessionService {
+             .subscribe({
+             next: (e) => {
+                 const connectionId = e.payload.session.connectionId;
+-                if (connectionId)
++                const transportService = agentContext.dependencyManager.resolve(TransportService_1.TransportService);
++                const remaining = connectionId ? transportService.getExistingSessionsForConnectionIdAndType(connectionId, 'WebSocket') : [];
++                if (connectionId && !remaining.some((session) => !session.socket || session.socket.readyState === 1))
+                     this.removeLiveSession(agentContext, { connectionId });
+             },
+         });
+@@ -52,8 +55,9 @@ let MessagePickupSessionService = class MessagePickupSessionService {
      }
      saveLiveSession(agentContext, options) {
          const { connectionId, protocolVersion, role } = options;
 -        // First remove any live session for the given connection Id
 -        this.removeLiveSession(agentContext, { connectionId });
-+        // Disable removing existing live session. This causes trouble with the pickup repository and they are cleaned up anyway when the transport session is removed.
-+        // this.removeLiveSession(agentContext, { connectionId });
++        const existing = this.sessions.find((session) => session.connectionId === connectionId && session.role === role);
++        if (existing && existing.protocolVersion === protocolVersion) return;
++        if (existing) this.removeLiveSession(agentContext, { connectionId });
          const session = {
              id: (0, uuid_1.uuid)(),
              connectionId,
+@@ -70,8 +74,8 @@ let MessagePickupSessionService = class MessagePickupSessionService {
+         });
+     }
+     removeLiveSession(agentContext, options) {
+-        const itemIndex = this.sessions.findIndex((session) => session.connectionId === options.connectionId);
+-        if (itemIndex > -1) {
++        let itemIndex = this.sessions.findIndex((session) => session.connectionId === options.connectionId);
++        while (itemIndex > -1) {
+             const [session] = this.sessions.splice(itemIndex, 1);
+             const eventEmitter = agentContext.dependencyManager.resolve(EventEmitter_1.EventEmitter);
+             eventEmitter.emit(agentContext, {
+@@ -80,6 +84,7 @@ let MessagePickupSessionService = class MessagePickupSessionService {
+                     session,
+                 },
+             });
++            itemIndex = this.sessions.findIndex((session) => session.connectionId === options.connectionId);
+         }
+     }
+ };

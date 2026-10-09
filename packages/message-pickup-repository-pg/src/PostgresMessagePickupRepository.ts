@@ -16,7 +16,7 @@ import {
   MessagePickupLiveSessionSavedEvent,
   MessagePickupRepository,
   MessagePickupSessionService,
-  MessageSender,
+  TransportService,
   QueuedMessage,
   RemoveMessagesOptions,
   TakeFromQueueOptions,
@@ -48,6 +48,10 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
   private postgresPassword: string
   private postgresHost: string
   private postgresDatabaseName: string
+  private liveSessionTimer?: NodeJS.Timeout
+  private liveSessionRenewal?: Promise<void>
+  private readonly localSessions = new Map<string, MessagePickupSession>()
+  private readonly sessionJobs = new Map<string, Promise<void>>()
 
   public constructor(options: PostgresMessagePickupRepositoryConfig) {
     const { logger, postgresUser, postgresPassword, postgresHost, postgresDatabaseName } = options
@@ -119,8 +123,11 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
           try {
             // Verify message sending method and delete session record from DB
-            await this.checkQueueMessages(connectionId)
-            await this.removeLiveSessionOnDb(connectionId)
+            await this.runSessionJob(connectionId, async () => {
+              this.localSessions.delete(data.payload.session.id)
+              await this.removeLiveSessionOnDb(data.payload.session.id)
+              if (!(await this.findLiveSessionInDb(connectionId))) await this.checkQueueMessages(connectionId)
+            })
             trustPingReceivedSet.delete(connectionId)
           } catch (handlerError) {
             this.logger?.error(`Error handling LiveSessionRemoved: ${handlerError}`)
@@ -136,7 +143,10 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
           try {
             // Add the live session record to the database
-            await this.addLiveSessionOnDb(liveSessionData, this.instanceName)
+            await this.runSessionJob(liveSessionData.connectionId, async () => {
+              await this.addLiveSessionOnDb(liveSessionData, this.instanceName)
+              this.localSessions.set(liveSessionData.id, liveSessionData)
+            })
           } catch (handlerError) {
             this.logger?.error(`Error handling LiveSessionSaved: ${handlerError}`)
           }
@@ -145,7 +155,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
       const connectionsService = this.agent.dependencyManager.resolve(ConnectionService)
       const pickupSessionService = this.agent.dependencyManager.resolve(MessagePickupSessionService)
-      const messageSender = this.agent.dependencyManager.resolve(MessageSender)
+      const transportService = this.agent.dependencyManager.resolve(TransportService)
       const mediationRepository = this.agent.dependencyManager.resolve(MediationRepository)
 
       // Backwards compatibility middleware for legacy implicit connections
@@ -228,6 +238,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
                 if (shouldSkipTrustPingSessionCreation) {
                   connection.setTag('completedConnection', true)
                   await connectionsService.update(context.agentContext, connection)
+                  await next()
                   return
                 }
 
@@ -240,7 +251,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
                     this.logger?.debug(
                       `Ignoring trust ping message for connectionId: ${connectionId} because a live pickup session was created less than 2 seconds ago.`
                     )
-                    trustPingReceivedSet.set(connectionId, new Date())
+                    await next()
                     return
                   }
                 }
@@ -250,11 +261,13 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
               // For live-delivery-change messages we are already creating the live session manually so we ignore it here.
               if (context.message.type === 'https://didcomm.org/messagepickup/2.0/live-delivery-change') {
+                await next()
+                await this.sessionJobs.get(connectionId)
                 return
               }
 
-              const sessionInDB = await this.findLiveSessionInDb(connectionId)
-              const shouldCreateLiveSession = !sessionInDB
+              const localSession = await this.findLocalLiveSession(connectionId)
+              const shouldCreateLiveSession = !localSession
 
               await next()
 
@@ -266,24 +279,30 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
                 })
                 void this.setLastSeenBackgroundJob(connection, connectionsService)
               }
+              await this.sessionJobs.get(connectionId)
+
+              const transportSession = transportService.findSessionByConnectionId(connectionId)
+              if (transportSession?.type !== 'WebSocket') return
 
               // Implicit pickup needs to manually deliver messages from the queue
               const messagesToDeliver = await this.takeFromQueue({
                 connectionId: connectionId,
                 limit: 10,
-                deleteMessages: true,
-                recipientDid: theirDid,
+                deleteMessages: false,
               })
 
               if (messagesToDeliver.length !== 0) {
-                const connection = await connectionsService.getById(options.agent.context, connectionId)
-                for (const message of messagesToDeliver) {
-                  await messageSender.sendPackage(options.agent.context, {
-                    connection,
-                    recipientKey: connection.did ?? connection.id,
-                    encryptedMessage: message.encryptedMessage,
-                    options: { transportPriority: { schemes: ['ws', 'wss'], restrictive: true } },
-                  })
+                try {
+                  for (const message of messagesToDeliver) {
+                    await transportSession.send(options.agent.context, message.encryptedMessage)
+                    await this.removeMessages({ connectionId, messageIds: [message.id] })
+                  }
+                } catch (error) {
+                  await this.messagesCollection?.query(
+                    "UPDATE queued_message SET state = 'pending' WHERE connection_id = $1 AND id = ANY($2::uuid[]) AND state = 'sending'",
+                    [connectionId, messagesToDeliver.map((message) => message.id)]
+                  )
+                  this.logger?.error('[implicitPickup] Failed to deliver claimed messages', { cause: error })
                 }
               }
               return
@@ -293,6 +312,15 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
           await next()
         })
       }
+      this.liveSessionTimer = setInterval(() => {
+        if (this.liveSessionRenewal) return
+        this.liveSessionRenewal = this.renewLiveSessions()
+          .catch((error) => this.logger?.error('[liveSessions] Failed to renew live sessions', { cause: error }))
+          .finally(() => {
+            this.liveSessionRenewal = undefined
+          })
+      }, 60000)
+      this.liveSessionTimer.unref()
     } catch (error) {
       this.logger?.error(`[initialize] Initialization failed: ${error}`)
       throw new Error(`Failed to initialize the service: ${error}`)
@@ -555,7 +583,46 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
   public async shutdown() {
     this.logger?.info('[shutdown] Close connection to postgres')
+    if (this.liveSessionTimer) clearInterval(this.liveSessionTimer)
+    this.liveSessionTimer = undefined
+    await this.liveSessionRenewal
+    await Promise.allSettled(this.sessionJobs.values())
     await this.messagesCollection?.end()
+  }
+
+  private async runSessionJob(connectionId: string, handler: () => Promise<void>): Promise<void> {
+    const previous = Promise.allSettled([
+      this.sessionJobs.get(connectionId) ?? Promise.resolve(),
+      this.liveSessionRenewal ?? Promise.resolve(),
+    ])
+    const job = previous.catch(() => undefined).then(handler)
+    this.sessionJobs.set(connectionId, job)
+    try {
+      await job
+    } finally {
+      if (this.sessionJobs.get(connectionId) === job) this.sessionJobs.delete(connectionId)
+    }
+  }
+
+  private async renewLiveSessions(): Promise<void> {
+    await Promise.allSettled(this.sessionJobs.values())
+    const sessions = [...this.localSessions.values()]
+    await this.messagesCollection?.query(
+      `INSERT INTO live_session (session_id, connection_id, protocol_version, instance, expires_at, created_at)
+       SELECT session.id, session.connection_id, session.protocol_version, $4, now() + interval '10 minutes', now()
+       FROM unnest($1::uuid[], $2::text[], $3::text[]) AS session(id, connection_id, protocol_version)
+       ON CONFLICT (session_id) DO UPDATE SET expires_at = EXCLUDED.expires_at
+       WHERE live_session.instance = EXCLUDED.instance`,
+      [sessions.map((session) => session.id), sessions.map((session) => session.connectionId),
+        sessions.map((session) => session.protocolVersion), this.instanceName]
+    )
+    await this.messagesCollection?.query(
+      `DELETE FROM live_session WHERE session_id IN (
+         SELECT session_id FROM live_session WHERE expires_at < now()
+         LIMIT 1000 FOR UPDATE SKIP LOCKED
+       )`,
+      []
+    )
   }
 
   /**
@@ -647,7 +714,10 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
     try {
       if (!this.agent) throw new Error('Agent is not defined')
-      const localSession = await this.agent.messagePickup.getLiveModeSession({ connectionId })
+      const localSession = await this.agent.messagePickup.getLiveModeSession({
+        connectionId,
+        role: MessagePickupSessionRole.MessageHolder,
+      })
 
       return localSession ? { ...localSession, isLocalSession: true } : undefined
     } catch (error) {
@@ -696,7 +766,9 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
       return recordFound
         ? {
-            ...queryLiveSession.rows[0],
+            id: queryLiveSession.rows[0].session_id,
+            connectionId: queryLiveSession.rows[0].connection_id,
+            protocolVersion: queryLiveSession.rows[0].protocol_version,
             role: MessagePickupSessionRole.MessageHolder,
             isLocalSession: false,
           }
@@ -721,13 +793,9 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
     try {
       const insertQuery = `
         INSERT INTO live_session (session_id, connection_id, protocol_version, instance, expires_at, created_at)
-        SELECT $1, $2::varchar, $3, $4, now() + interval '10 minutes', now()
-        WHERE NOT EXISTS (
-          SELECT 1
-          FROM live_session
-          WHERE connection_id = $2::varchar
-            AND expires_at > now()
-        )
+        VALUES ($1, $2::varchar, $3, $4, now() + interval '10 minutes', now())
+        ON CONFLICT (session_id) DO UPDATE SET expires_at = EXCLUDED.expires_at
+        WHERE live_session.instance = EXCLUDED.instance
         RETURNING session_id
       `
       const result = await this.messagesCollection?.query(
@@ -754,19 +822,19 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
    *This method remove connectionId record to DB upon LiveSessionRemove event
    * @param connectionId
    */
-  private async removeLiveSessionOnDb(connectionId: string): Promise<void> {
-    this.logger?.debug(`[removeLiveSessionOnDb] initializing remove LiveSession to connectionId ${connectionId}`)
-    if (!connectionId) throw new Error('connectionId is not defined')
+  private async removeLiveSessionOnDb(sessionId: string): Promise<void> {
+    this.logger?.debug(`[removeLiveSessionOnDb] Removing live session ${sessionId}`)
+    if (!sessionId) throw new Error('sessionId is not defined')
     try {
       // Construct the SQL query with the placeholders
-      const query = 'DELETE FROM live_session WHERE connection_id = $1'
+      const query = 'DELETE FROM live_session WHERE session_id = $1 AND instance = $2'
 
       // Add connectionId  for query parameters
-      const queryParams = [connectionId]
+      const queryParams = [sessionId, this.instanceName]
 
       await this.messagesCollection?.query(query, queryParams)
 
-      this.logger?.debug(`[removeLiveSessionOnDb] removed LiveSession to connectionId ${connectionId}`)
+      this.logger?.debug(`[removeLiveSessionOnDb] Removed live session ${sessionId}`)
     } catch (error) {
       this.logger?.error(`[removeLiveSessionOnDb] Error removing LiveSession: ${error}`)
     }
