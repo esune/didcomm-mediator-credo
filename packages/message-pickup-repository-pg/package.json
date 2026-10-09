@@ -21,7 +21,7 @@
     "types:check": "tsc --noEmit",
     "style:check": "biome check --unsafe",
     "style:fix": "biome check --write --unsafe",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('src/migrations', 'build/migrations', { recursive: true })\"",
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {

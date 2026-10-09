@@ -48,6 +48,11 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
   private postgresPassword: string
   private postgresHost: string
   private postgresDatabaseName: string
+  private readonly deliveryLeaseSeconds: number
+  private readonly recoveryIntervalSeconds: number
+  private readonly recoveryBatchSize: number
+  private recoveryTimer?: NodeJS.Timeout
+  private recoveryJob?: Promise<void>
 
   public constructor(options: PostgresMessagePickupRepositoryConfig) {
     const { logger, postgresUser, postgresPassword, postgresHost, postgresDatabaseName } = options
@@ -57,6 +62,18 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
     this.postgresPassword = postgresPassword
     this.postgresHost = postgresHost
     this.postgresDatabaseName = postgresDatabaseName || 'messagepickuprepository'
+    this.deliveryLeaseSeconds = options.deliveryLeaseSeconds ?? 300
+    this.recoveryIntervalSeconds = options.recoveryIntervalSeconds ?? 60
+    this.recoveryBatchSize = options.recoveryBatchSize ?? 1000
+    for (const [name, value, maximum] of [
+      ['deliveryLeaseSeconds', this.deliveryLeaseSeconds, 86400],
+      ['recoveryIntervalSeconds', this.recoveryIntervalSeconds, 2147483],
+      ['recoveryBatchSize', this.recoveryBatchSize, 10000],
+    ] as const) {
+      if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+        throw new Error(`${name} must be an integer between 1 and ${maximum}`)
+      }
+    }
 
     // Initialize instanceName
     this.instanceName = `${os.hostname()}-${process.pid}-${randomUUID()}`
@@ -293,6 +310,17 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
           await next()
         })
       }
+      await this.recoverExpiredDeliveries()
+      this.recoveryTimer = setInterval(() => {
+        if (this.recoveryJob) return
+        this.recoveryJob = this.recoverExpiredDeliveries()
+          .then(() => undefined)
+          .catch((error) => this.logger?.error('[recovery] Failed to recover delivery leases', { cause: error }))
+          .finally(() => {
+            this.recoveryJob = undefined
+          })
+      }, this.recoveryIntervalSeconds * 1000)
+      this.recoveryTimer.unref()
     } catch (error) {
       this.logger?.error(`[initialize] Initialization failed: ${error}`)
       throw new Error(`Failed to initialize the service: ${error}`)
@@ -447,6 +475,8 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
       throw new Error('messagesCollection is not defined')
     }
 
+    let persistedMessageId: string | undefined
+    let sendingAt: Date | undefined
     try {
       // Retrieve local live session details
       const localLiveSession = await this.findLocalLiveSession(connectionId)
@@ -455,7 +485,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
       const query = `
         INSERT INTO queued_message(connection_id, recipient_dids, encrypted_message, state, created_at) 
         VALUES($1, $2, $3, $4, $5) 
-        RETURNING id
+        RETURNING id, sending_at
       `
 
       const state = localLiveSession ? 'sending' : 'pending'
@@ -469,6 +499,8 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
       ])
 
       const messageRecord = result?.rows[0]
+      persistedMessageId = messageRecord.id
+      sendingAt = messageRecord.sending_at
 
       this.logger?.debug(
         `[addMessage] Message added with ID: ${messageRecord.id}, receivedAt: ${receivedAt.toISOString()} for connectionId: ${connectionId}`
@@ -507,6 +539,17 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
       return messageRecord.id
     } catch (error) {
       this.logger?.error(`[addMessage] Error during message insertion or processing: ${error}`)
+      if (persistedMessageId) {
+        try {
+          await this.messagesCollection.query(
+            "UPDATE queued_message SET state = 'pending' WHERE id = $1 AND state = 'sending' AND sending_at = $2",
+            [persistedMessageId, sendingAt]
+          )
+        } catch (recoveryError) {
+          this.logger?.error('[addMessage] Failed to release delivery lease', { cause: recoveryError })
+        }
+        return persistedMessageId
+      }
       throw new Error(`Failed to add message: ${error}`)
     }
   }
@@ -555,7 +598,31 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
   public async shutdown() {
     this.logger?.info('[shutdown] Close connection to postgres')
+    if (this.recoveryTimer) clearInterval(this.recoveryTimer)
+    this.recoveryTimer = undefined
+    await this.recoveryJob
     await this.messagesCollection?.end()
+  }
+
+  private async recoverExpiredDeliveries(): Promise<number> {
+    if (!this.messagesCollection) throw new Error('messagesCollection is not defined')
+    const result = await this.messagesCollection.query(
+      `WITH expired_deliveries AS (
+         SELECT id FROM queued_message
+         WHERE state = 'sending'
+           AND created_at < now() - ($1 * interval '1 second')
+           AND COALESCE(sending_at, created_at) < now() - ($1 * interval '1 second')
+         ORDER BY created_at, id
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+       )
+       UPDATE queued_message AS message
+       SET state = 'pending'
+       FROM expired_deliveries
+       WHERE message.id = expired_deliveries.id`,
+      [this.deliveryLeaseSeconds, this.recoveryBatchSize]
+    )
+    return result.rowCount ?? 0
   }
 
   /**

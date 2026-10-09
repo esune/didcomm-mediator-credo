@@ -194,3 +194,36 @@ index d004326423598fd18d4af8c77c02298cfae27e2e..13688231ae82f08afa7ddb1d062c5f49
          const session = {
              id: (0, uuid_1.uuid)(),
              connectionId,
+diff --git a/build/modules/routing/services/MediatorService.js b/build/modules/routing/services/MediatorService.js
+index ea168df663fb395c44afc5d68ac88a7121bf6bfa..d9b8dbb1315c2a46a6ffb3c913f195b7c7022426 100644
+--- a/build/modules/routing/services/MediatorService.js
++++ b/build/modules/routing/services/MediatorService.js
+@@ -80,15 +80,20 @@ let MediatorService = class MediatorService {
+                     recipientDids: [(0, helpers_1.verkeyToDidKey)(message.to)],
+                     message: message.message,
+                 });
+-                const session = await this.messagePickupApi.getLiveModeSession({
+-                    connectionId: mediationRecord.connectionId,
+-                    role: MessagePickupSession_1.MessagePickupSessionRole.MessageHolder,
+-                });
+-                if (session) {
+-                    await this.messagePickupApi.deliverMessagesFromQueue({
+-                        pickupSessionId: session.id,
+-                        recipientDid: (0, helpers_1.verkeyToDidKey)(message.to),
++                try {
++                    const session = await this.messagePickupApi.getLiveModeSession({
++                        connectionId: mediationRecord.connectionId,
++                        role: MessagePickupSession_1.MessagePickupSessionRole.MessageHolder,
+                     });
++                    if (session) {
++                        await this.messagePickupApi.deliverMessagesFromQueue({
++                            pickupSessionId: session.id,
++                            recipientDid: (0, helpers_1.verkeyToDidKey)(message.to),
++                        });
++                    }
++                }
++                catch (error) {
++                    this.logger.warn('Queued message live delivery failed', { cause: error });
+                 }
+                 break;
+             }

@@ -72,6 +72,13 @@ const messageRepository = new PostgresMessagePickupRepository({
 
 ### Initializing the Repository
 
+Delivery attempts have a configurable lease (`deliveryLeaseSeconds`, default `300`).
+Expired or unacknowledged attempts become eligible for pickup again, including attempts left by crashed pods.
+Retries provide at-least-once delivery: clients must tolerate receiving the same message ID again.
+The lease must exceed the longest expected acknowledgement delay.
+`recoveryIntervalSeconds` defaults to `60`, and `recoveryBatchSize` to `1000`.
+All three options are positive integers and can also be supplied through the mediator's `PICKUP_SETTINGS`.
+
 To start using the `PostgresMessagePickupRepository`, initialize it with an agent and a callback function for retrieving connection information.
 
 This callback must return another callback function that will be called by `PostgresMessagePickupRepository` when it determines that a Push Notification must be sent. It is a generic approach that makes you free to implement the Push notification service you want.
