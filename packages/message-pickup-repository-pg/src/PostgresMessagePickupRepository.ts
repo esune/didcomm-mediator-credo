@@ -320,16 +320,23 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
       // already deleted, since the two queries weren't guaranteed to see the same set.
       if (deleteMessages) {
         const query = `
-        DELETE FROM queued_message
-        WHERE id IN (
+        WITH messages_to_take AS (
           SELECT id
           FROM queued_message
           WHERE (connection_id = $1 OR recipient_dids @> ARRAY[$2]::text[])
             AND state = 'pending'
-          ORDER BY created_at
+          ORDER BY created_at, id
           LIMIT $3
+          FOR UPDATE SKIP LOCKED
+        ), deleted_messages AS (
+          DELETE FROM queued_message AS message
+          USING messages_to_take
+          WHERE message.id = messages_to_take.id
+          RETURNING message.id, message.encrypted_message, message.state, message.created_at
         )
-        RETURNING id, encrypted_message, state, created_at;
+        SELECT id, encrypted_message, state, created_at
+        FROM deleted_messages
+        ORDER BY created_at, id;
       `
         const params = [connectionId, recipientDid, limit ?? null]
         const result = await this.messagesCollection?.query(query, params)
@@ -353,17 +360,25 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
       // Use UPDATE and RETURNING to fetch and update messages in one step
       const query = `
-      UPDATE queued_message
-      SET state = 'sending'
-      WHERE id IN (
-        SELECT id 
-        FROM queued_message 
-        WHERE (connection_id = $1 OR recipient_dids @> ARRAY[$2]::text[]) 
-        AND state = 'pending' 
-        ORDER BY created_at 
+      WITH messages_to_take AS (
+        SELECT id
+        FROM queued_message
+        WHERE (connection_id = $1 OR recipient_dids @> ARRAY[$2]::text[])
+          AND state = 'pending'
+        ORDER BY created_at, id
         LIMIT $3
+        FOR UPDATE SKIP LOCKED
+      ), claimed_messages AS (
+        UPDATE queued_message AS message
+        SET state = 'sending'
+        FROM messages_to_take
+        WHERE message.id = messages_to_take.id
+          AND message.state = 'pending'
+        RETURNING message.id, message.encrypted_message, message.state, message.created_at
       )
-      RETURNING id, encrypted_message, state, created_at;
+      SELECT id, encrypted_message, state, created_at
+      FROM claimed_messages
+      ORDER BY created_at, id;
     `
       const params = [connectionId, recipientDid, limit ?? null]
       const result = await this.messagesCollection?.query(query, params)
@@ -615,20 +630,12 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
   private async checkQueueMessages(connectionID: string): Promise<void> {
     try {
       this.logger?.debug(`[checkQueueMessages] Init verify messages state 'sending'`)
-      const messagesToSend = await this.messagesCollection?.query(
-        'SELECT * FROM queued_message WHERE state = $1 and connection_id = $2',
-        ['sending', connectionID]
+      const result = await this.messagesCollection?.query(
+        'UPDATE queued_message SET state = $1 WHERE state = $2 AND connection_id = $3',
+        ['pending', 'sending', connectionID]
       )
-      if (messagesToSend && messagesToSend.rows.length > 0) {
-        for (const message of messagesToSend.rows) {
-          // Update the message state to 'pending'
-          await this.messagesCollection?.query('UPDATE queued_message SET state = $1 WHERE id = $2', [
-            'pending',
-            message.id,
-          ])
-        }
-
-        this.logger?.debug(`[checkQueueMessages] ${messagesToSend.rows.length} messages updated to 'pending'.`)
+      if (result?.rowCount) {
+        this.logger?.debug(`[checkQueueMessages] ${result.rowCount} messages updated to 'pending'.`)
       } else {
         this.logger?.debug('[checkQueueMessages] No messages in "sending" state.')
       }
