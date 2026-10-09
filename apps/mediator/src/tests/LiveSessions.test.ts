@@ -25,6 +25,12 @@ describe('patched live sessions', () => {
       if (token.name === 'TransportService') return transport
       return emitter
     })
+    transport.saveSession({
+      id: 'holder-socket',
+      connectionId: 'connection',
+      type: 'WebSocket',
+      socket: { readyState: 1 },
+    } as any)
   })
 
   it('keeps repeated enables idempotent', () => {
@@ -43,12 +49,13 @@ describe('patched live sessions', () => {
   })
 
   it('keeps live mode until the last open WebSocket is removed', () => {
+    transport.removeSession({ id: 'holder-socket' } as any)
     pickup.start(context as any)
-    pickup.saveLiveSession(context as any, options)
     const first = { id: 'first', connectionId: 'connection', type: 'WebSocket', socket: { readyState: 1 } }
     const second = { ...first, id: 'second' }
     transport.saveSession(first as any)
     transport.saveSession(second as any)
+    pickup.saveLiveSession(context as any, options)
 
     transport.removeSession(first as any)
     expect(pickup.getLiveSessionByConnectionId(context as any, options)).toBeDefined()
@@ -75,5 +82,14 @@ describe('patched live sessions', () => {
       inboundMessage: { hasReturnRouting: () => false },
     } as any)
     expect(transport.findSessionByConnectionId('connection')?.id).toBe('http')
+  })
+
+  it('does not create holder presence without a WebSocket but preserves recipient sessions', () => {
+    transport.removeSession({ id: 'holder-socket' } as any)
+
+    pickup.saveLiveSession(context as any, options)
+    expect((pickup as any).sessions).toHaveLength(0)
+    pickup.saveLiveSession(context as any, { ...options, role: MessagePickupSessionRole.Recipient })
+    expect((pickup as any).sessions).toHaveLength(1)
   })
 })

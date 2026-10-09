@@ -52,6 +52,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
   private liveSessionRenewal?: Promise<void>
   private readonly localSessions = new Map<string, MessagePickupSession>()
   private readonly sessionJobs = new Map<string, Promise<void>>()
+  private readonly implicitSessions = new Set<string>()
 
   public constructor(options: PostgresMessagePickupRepositoryConfig) {
     const { logger, postgresUser, postgresPassword, postgresHost, postgresDatabaseName } = options
@@ -118,6 +119,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
       options.agent.events.on(
         MessagePickupEventTypes.LiveSessionRemoved,
         async (data: MessagePickupLiveSessionRemovedEvent) => {
+          if (data.payload.session.role !== MessagePickupSessionRole.MessageHolder) return
           const connectionId = data.payload.session.connectionId
           this.logger?.info(`*** Session removed for connectionId: ${connectionId} ***`)
 
@@ -125,6 +127,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
             // Verify message sending method and delete session record from DB
             await this.runSessionJob(connectionId, async () => {
               this.localSessions.delete(data.payload.session.id)
+              this.implicitSessions.delete(data.payload.session.id)
               await this.removeLiveSessionOnDb(data.payload.session.id)
               if (!(await this.findLiveSessionInDb(connectionId))) await this.checkQueueMessages(connectionId)
             })
@@ -138,6 +141,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
       options.agent.events.on(
         MessagePickupEventTypes.LiveSessionSaved,
         async (data: MessagePickupLiveSessionSavedEvent) => {
+          if (data.payload.session.role !== MessagePickupSessionRole.MessageHolder) return
           const liveSessionData = data.payload.session
           this.logger?.info(`*** Session saved for connectionId: ${liveSessionData.connectionId} ***`)
 
@@ -263,6 +267,10 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
               if (context.message.type === 'https://didcomm.org/messagepickup/2.0/live-delivery-change') {
                 await next()
                 await this.sessionJobs.get(connectionId)
+                connection.setTag('explicitLiveModeControl', true)
+                await connectionsService.update(context.agentContext, connection)
+                const currentSession = await this.findLocalLiveSession(connectionId)
+                if (currentSession) this.implicitSessions.delete(currentSession.id)
                 return
               }
 
@@ -271,13 +279,18 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
               await next()
 
+              if (connection.getTag('explicitLiveModeControl')) return
               const transportSession = transportService.findSessionByConnectionId(connectionId)
               if (shouldCreateLiveSession && transportSession?.type === 'WebSocket') {
-                await pickupSessionService.saveLiveSession(options.agent.context, {
+                pickupSessionService.saveLiveSession(options.agent.context, {
                   connectionId: connectionId,
                   protocolVersion: 'v2',
                   role: MessagePickupSessionRole.MessageHolder,
                 })
+                const implicitSession = pickupSessionService.getLiveSessionByConnectionId(options.agent.context, {
+                  connectionId, role: MessagePickupSessionRole.MessageHolder,
+                })
+                if (implicitSession) this.implicitSessions.add(implicitSession.id)
                 void this.setLastSeenBackgroundJob(connection, connectionsService)
               }
               await this.sessionJobs.get(connectionId)
@@ -520,10 +533,17 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
       if (localLiveSession) {
         this.logger?.debug(`[addMessage] Local live session exists for connectionId: ${connectionId}`)
 
-        await this.agent.messagePickup.deliverMessages({
-          pickupSessionId: localLiveSession.id,
-          messages: [{ id: messageRecord.id, encryptedMessage: payload, receivedAt }],
-        })
+        if (this.implicitSessions.has(localLiveSession.id)) {
+          const transport = this.agent.dependencyManager.resolve(TransportService).findSessionByConnectionId(connectionId)
+          if (transport?.type !== 'WebSocket') throw new Error('Implicit delivery transport is no longer available')
+          await transport.send(this.agent.context, payload)
+          await this.removeMessages({ connectionId, messageIds: [messageRecord.id] })
+        } else {
+          await this.agent.messagePickup.deliverMessages({
+            pickupSessionId: localLiveSession.id,
+            messages: [{ id: messageRecord.id, encryptedMessage: payload, receivedAt }],
+          })
+        }
       } else if (liveSessionInPostgres) {
         this.logger?.debug(
           `[addMessage] Publishing new message event to Pub/Sub channel for connectionId: ${connectionId}`
@@ -651,9 +671,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
             )
   
             // Deliver messages from the queue for the live session
-            await this.agent?.messagePickup.deliverMessagesFromQueue({
-              pickupSessionId: pickupLiveSession.id,
-            })
+            await this.deliverLiveQueue(pickupLiveSession)
           } else {
             this.logger?.debug(
               `[initializeMessageListener] No LiveSession found on channel: ${channel} for connectionId: ${connectionId}.`
@@ -701,6 +719,29 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
       }
     } catch (error) {
       this.logger?.error(`[checkQueueMessages] Error processing messages: ${error}`)
+    }
+  }
+
+  private async deliverLiveQueue(session: MessagePickupSession): Promise<void> {
+    if (!this.agent) throw new Error('Agent is not defined')
+    if (!this.implicitSessions.has(session.id)) {
+      await this.agent.messagePickup.deliverMessagesFromQueue({ pickupSessionId: session.id })
+      return
+    }
+    const transport = this.agent.dependencyManager.resolve(TransportService).findSessionByConnectionId(session.connectionId)
+    if (transport?.type !== 'WebSocket') return
+    const messages = await this.takeFromQueue({ connectionId: session.connectionId, limit: 10, deleteMessages: false })
+    try {
+      for (const message of messages) {
+        await transport.send(this.agent.context, message.encryptedMessage)
+        await this.removeMessages({ connectionId: session.connectionId, messageIds: [message.id] })
+      }
+    } catch (error) {
+      await this.messagesCollection?.query(
+        "UPDATE queued_message SET state = 'pending' WHERE connection_id = $1 AND id = ANY($2::uuid[]) AND state = 'sending'",
+        [session.connectionId, messages.map((message) => message.id)]
+      )
+      throw error
     }
   }
 

@@ -9,17 +9,17 @@ vi.mock('pg', () => ({
     query = query
     end = vi.fn()
     on = vi.fn()
-      connect = vi.fn().mockResolvedValue({
-        query: vi.fn().mockResolvedValue({ rows: [{ acquired: false }] }),
-        release: vi.fn(),
-      })
+    connect = vi.fn().mockResolvedValue({
+      query: vi.fn().mockResolvedValue({ rows: [{ acquired: false }] }),
+      release: vi.fn(),
+    })
   },
 }))
 vi.mock('pg-pubsub', () => ({
   default: class {
     addChannel = vi.fn()
     on = vi.fn()
-      close = vi.fn()
+    close = vi.fn()
   },
 }))
 vi.mock('../src/utils/buildPgDatabaseWithMigrations', () => ({ buildPgDatabaseWithMigrations: vi.fn() }))
@@ -31,14 +31,18 @@ describe('pickup middleware', () => {
   const update = vi.fn()
   const agent = {
     context: {},
-    events: { on: vi.fn() },
+    events: { on: vi.fn(), emit: vi.fn() },
     mediator: { config: { messageForwardingStrategy: MessageForwardingStrategy.QueueAndLiveModeDelivery } },
-    messagePickup: { getLiveModeSession: vi.fn() },
+    messagePickup: { getLiveModeSession: vi.fn(), deliverMessages: vi.fn(), deliverMessagesFromQueue: vi.fn() },
     dependencyManager: {
       registerMessageHandlerMiddleware: vi.fn(),
       resolve: (token: { name: string }) => {
         if (token.name === 'TransportService') return { findSessionByConnectionId: () => socket }
-        if (token.name === 'MessagePickupSessionService') return { saveLiveSession }
+        if (token.name === 'MessagePickupSessionService')
+          return {
+            saveLiveSession,
+            getLiveSessionByConnectionId: () => ({ id: 'implicit-session' }),
+          }
         return { update }
       },
     },
@@ -118,6 +122,39 @@ describe('pickup middleware', () => {
     expect(next).toHaveBeenCalledTimes(1)
     expect(saveLiveSession).not.toHaveBeenCalled()
     expect(repository.takeFromQueue).not.toHaveBeenCalled()
+  })
+
+  it('does not override explicit live-mode control with a later ping', async () => {
+    const ping = context('https://didcomm.org/trust_ping/1.0/ping')
+    ping.connection.getTag.mockImplementation((name: string) => name === 'explicitLiveModeControl')
+
+    await middleware()(ping, vi.fn())
+
+    expect(saveLiveSession).not.toHaveBeenCalled()
+    expect(repository.takeFromQueue).not.toHaveBeenCalled()
+  })
+
+  it('delivers new implicit messages raw instead of requiring v2 acknowledgements', async () => {
+    await middleware()(context('https://didcomm.org/trust_ping/1.0/ping'), vi.fn())
+    agent.messagePickup.getLiveModeSession.mockResolvedValue({ id: 'implicit-session' })
+    query.mockImplementation(async (sql: string) => ({
+      rows: sql.includes('INSERT INTO queued_message') ? [{ id: 'queued-message' }] : [],
+      rowCount: 0,
+    }))
+    const remove = vi.spyOn(repository, 'removeMessages').mockResolvedValue(undefined)
+
+    await repository.addMessage({ connectionId: 'connection', recipientDids: [], payload: {} as any })
+
+    expect(socket.send).toHaveBeenCalledWith({}, {})
+    expect(remove).toHaveBeenCalledWith({ connectionId: 'connection', messageIds: ['queued-message'] })
+    expect(agent.messagePickup.deliverMessages).not.toHaveBeenCalled()
+  })
+
+  it('keeps explicit live queue delivery on the v2 acknowledgement path', async () => {
+    await (repository as any).deliverLiveQueue({ id: 'explicit-session', connectionId: 'connection' })
+
+    expect(agent.messagePickup.deliverMessagesFromQueue).toHaveBeenCalledWith({ pickupSessionId: 'explicit-session' })
+    expect(socket.send).not.toHaveBeenCalled()
   })
 
   it('deletes only successfully written messages and releases the failed remainder', async () => {

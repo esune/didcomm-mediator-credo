@@ -72,6 +72,10 @@ const messageRepository = new PostgresMessagePickupRepository({
 
 ### Initializing the Repository
 
+Legacy implicit WebSocket pickup sends encrypted payloads directly and deletes messages after a successful socket write;
+it does not provide recipient acknowledgements. Explicit v2 live delivery retains messages until `messages-received`.
+Once a connection uses explicit live-delivery control, later trust pings do not implicitly enable or drain its queue.
+
 To start using the `PostgresMessagePickupRepository`, initialize it with an agent and a callback function for retrieving connection information.
 
 This callback must return another callback function that will be called by `PostgresMessagePickupRepository` when it determines that a Push Notification must be sent. It is a generic approach that makes you free to implement the Push notification service you want.
