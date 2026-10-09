@@ -1,0 +1,38 @@
+diff --git a/build/transport/WsInboundTransport.js b/build/transport/WsInboundTransport.js
+index 37dfed0825ece973f87ea00485dc9b872f4cf467..182f16e0ba134b5c02e3e02c730cd3063aa07ad0 100644
+--- a/build/transport/WsInboundTransport.js
++++ b/build/transport/WsInboundTransport.js
+@@ -50,6 +50,7 @@ class WsInboundTransport {
+                 this.listenOnWebSocketMessages(agent, socket, session);
+                 socket.on('close', () => {
+                     this.logger.debug('Socket closed.');
++                    delete this.socketIds[socketId];
+                     transportService.removeSession(session);
+                 });
+             }
+@@ -101,14 +102,17 @@ class WebSocketTransportSession {
+         if (this.socket.readyState !== ws_1.default.OPEN) {
+             throw new core_1.CredoError(`${this.type} transport session has been closed.`);
+         }
+-        this.socket.send(JSON.stringify(encryptedMessage), (error) => {
+-            if (error != undefined) {
+-                this.logger.debug(`Error sending message: ${error}`);
+-                throw new core_1.CredoError(`${this.type} send message failed.`, { cause: error });
+-            }
+-            else {
+-                this.logger.debug(`${this.type} sent message successfully.`);
+-            }
++        await new Promise((resolve, reject) => {
++            this.socket.send(JSON.stringify(encryptedMessage), (error) => {
++                if (error != undefined) {
++                    this.logger.debug(`Error sending message: ${error}`);
++                    reject(new core_1.CredoError(`${this.type} send message failed.`, { cause: error }));
++                }
++                else {
++                    this.logger.debug(`${this.type} sent message successfully.`);
++                    resolve();
++                }
++            });
+         });
+     }
+     async close() {
