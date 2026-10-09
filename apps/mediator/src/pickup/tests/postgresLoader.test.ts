@@ -109,7 +109,7 @@ describe('PostgresPickupLoader', () => {
     )
   })
 
-  it('should call PostgresMessagePickupRepository with correct config in load()', async () => {
+  it.each([0, 7, 30])('passes database and retention settings with a %s-day TTL', async (messageTtlDays) => {
     ;(config.get as Mock).mockImplementation((...args: any[]) => {
       const mockValues: Record<string, any> = {
         'agent:pickup': {
@@ -119,6 +119,9 @@ describe('PostgresPickupLoader', () => {
             postgresUser: 'user',
             postgresPassword: 'pass',
             postgresDatabaseName: 'db',
+            messageTtlDays,
+            cleanupIntervalSeconds: 10,
+            cleanupBatchSize: 25,
           }),
         },
         'agent:logLevel': 'info',
@@ -135,6 +138,9 @@ describe('PostgresPickupLoader', () => {
         postgresUser: 'user',
         postgresPassword: 'pass',
         postgresDatabaseName: 'db',
+        messageTtlDays,
+        cleanupIntervalSeconds: 10,
+        cleanupBatchSize: 25,
         logger: expect.anything(),
       })
     )

@@ -70,6 +70,23 @@ const messageRepository = new PostgresMessagePickupRepository({
 })
 ```
 
+### Message Retention
+
+Queued messages are permanently deleted after 30 days by default, including messages waiting for acknowledgement.
+This applies to every forwarding strategy using the PostgreSQL repository, not to wallet-backed or DynamoDB queues.
+Set `messageTtlDays` to `0` to disable deletion, or another integer to change the retention period.
+
+The constructor accepts `messageTtlDays`, `cleanupIntervalSeconds` (default `60`), and `cleanupBatchSize` (default `1000`).
+Mediator deployments can set the same options in `PICKUP_SETTINGS`, for example:
+
+```json
+{"useBaseConnection": true, "messageTtlDays": 30, "cleanupIntervalSeconds": 60, "cleanupBatchSize": 1000}
+```
+
+Each sweep deletes at most one batch. Database advisory locks prevent overlapping sweeps across replicas.
+Call the repository's `shutdown()` method to stop its timer and finish any active sweep before closing the pool.
+Deleting rows does not immediately reduce the database's allocated disk space; PostgreSQL vacuum maintenance is still required.
+
 ### Initializing the Repository
 
 To start using the `PostgresMessagePickupRepository`, initialize it with an agent and a callback function for retrieving connection information.

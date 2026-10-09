@@ -29,6 +29,7 @@ import {
 import { MessageForwardingStrategy } from '@credo-ts/core/build/modules/routing/MessageForwardingStrategy'
 import { Pool } from 'pg'
 import PGPubsub from 'pg-pubsub'
+import { MessageQueueRetention } from './MessageQueueRetention'
 import {
   ExtendedMessagePickupSession,
   MessageQueuedEvent,
@@ -48,6 +49,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
   private postgresPassword: string
   private postgresHost: string
   private postgresDatabaseName: string
+  private readonly retention: MessageQueueRetention
 
   public constructor(options: PostgresMessagePickupRepositoryConfig) {
     const { logger, postgresUser, postgresPassword, postgresHost, postgresDatabaseName } = options
@@ -57,6 +59,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
     this.postgresPassword = postgresPassword
     this.postgresHost = postgresHost
     this.postgresDatabaseName = postgresDatabaseName || 'messagepickuprepository'
+    this.retention = new MessageQueueRetention(options, logger)
 
     // Initialize instanceName
     this.instanceName = `${os.hostname()}-${process.pid}-${randomUUID()}`
@@ -293,6 +296,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
           await next()
         })
       }
+      this.retention.start(this.messagesCollection)
     } catch (error) {
       this.logger?.error(`[initialize] Initialization failed: ${error}`)
       throw new Error(`Failed to initialize the service: ${error}`)
@@ -555,6 +559,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
   public async shutdown() {
     this.logger?.info('[shutdown] Close connection to postgres')
+    await this.retention.stop()
     await this.messagesCollection?.end()
   }
 
