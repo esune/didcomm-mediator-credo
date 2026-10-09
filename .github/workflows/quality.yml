@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - live-mode-postgres
   push:
     branches:
       - main
@@ -39,6 +40,21 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     name: Tests
+    env:
+      PICKUP_TEST_DATABASE_URL: postgres://postgres:pickup-test-password@localhost:5432/pickup_test
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: pickup-test-password
+          POSTGRES_DB: pickup_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Checkout Repo

@@ -9,8 +9,12 @@ import {
   DidKey,
   GetAvailableMessageCountOptions,
   KeylistUpdateMessage,
+  Key,
+  KeyType,
   Logger,
   MediationRepository,
+  MediationRole,
+  MediationState,
   MessagePickupEventTypes,
   MessagePickupLiveSessionRemovedEvent,
   MessagePickupLiveSessionSavedEvent,
@@ -177,40 +181,18 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
                 '[MessageHandlerMiddleware] Invalid context for live pickup session creation type message.'
               )
             } else {
-              // This block is to handle situations where the recipient is attempting to add the recipient key to multiple
-              // mediation records. Since we are allowing multiple connections to use the same recipient key, we need to delete
-              // the mediation record for the recipient key when we see an "add" action in a keylist update message.
-              // This is to prevent the mediation record duplicate records for the same recipient key.
+              const previousKeyOwners: Array<{ id: string; key: string }> = []
               if (context.message.type === 'https://didcomm.org/coordinate-mediation/1.0/keylist-update') {
-                this.logger?.debug(
-                  `[MessageHandlerMiddleware] Processing keylist update message for connectionId: ${connectionId}`
-                )
                 const keyListUpdateMessage = context.message as KeylistUpdateMessage
-                const addRecipientKeyUpdate = keyListUpdateMessage.updates.find(update => update.action === 'add')
-                if (!addRecipientKeyUpdate) {
-                  this.logger?.debug(
-                    `[MessageHandlerMiddleware] No "add" action found in keylist update message for connectionId: ${connectionId}. Skipping live session creation.`
-                  )
-                } else {
-                  try {
-                    const didKey = DidKey.fromDid(addRecipientKeyUpdate.recipientKey)
-                    this.logger?.debug(
-                      `[MessageHandlerMiddleware] Attempting to find mediation record for recipient key: [${didKey.key.publicKeyBase58}]`
-                    )
-                    const mediationRecord = await mediationRepository.getSingleByRecipientKey(options.agent.context, didKey.key.publicKeyBase58)
-                    // We can't have duplicate keys in a mediation record. We are allowing a new connection to use this key.
-                    // Set the recipient keys to an empty array to prevent the mediation record from being found in subsequent messages,
-                    // effectively deleting the mediation record without actually deleting it from the database.
-                    // It will be removed later by a separate cleanup process.
-                    this.logger?.debug(
-                      `[MessageHandlerMiddleware] Found mediation record for recipient key: [${didKey.key.publicKeyBase58}] Removing recipient keys to avoid duplication.`
-                    )
-                    mediationRecord.recipientKeys = []
-                    await mediationRepository.update(options.agent.context, mediationRecord)
-                  } catch (error) {
-                    this.logger?.warn(
-                      `[MessageHandlerMiddleware] Failed to clean up mediation record for connectionId: ${connectionId}. Error: ${error}`
-                    )
+                for (const update of keyListUpdateMessage.updates.filter((update) => update.action === 'add')) {
+                  const key = update.recipientKey.startsWith('did:key:')
+                    ? DidKey.fromDid(update.recipientKey).key.publicKeyBase58
+                    : update.recipientKey
+                  const owner = await mediationRepository.findSingleByQuery(options.agent.context, {
+                    recipientKeys: [key], role: MediationRole.Mediator,
+                  })
+                  if (owner && owner.connectionId !== connectionId) {
+                    previousKeyOwners.push({ id: owner.id, key })
                   }
                 }
               }
@@ -258,6 +240,17 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
               await next()
 
+              for (const owner of previousKeyOwners) {
+                const record = await mediationRepository.getById(options.agent.context, owner.id)
+                record.recipientKeys = record.recipientKeys.filter((key) => key !== owner.key)
+                await mediationRepository.update(options.agent.context, record)
+                const recipientDid = new DidKey(Key.fromPublicKeyBase58(owner.key, KeyType.Ed25519)).did
+                await this.messagesCollection?.query(
+                  "UPDATE queued_message SET connection_id = $1, state = 'pending' WHERE connection_id <> $1 AND recipient_dids @> ARRAY[$2]::text[]",
+                  [connectionId, recipientDid]
+                )
+              }
+
               if (shouldCreateLiveSession) {
                 await pickupSessionService.saveLiveSession(options.agent.context, {
                   connectionId: connectionId,
@@ -272,7 +265,6 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
                 connectionId: connectionId,
                 limit: 10,
                 deleteMessages: true,
-                recipientDid: theirDid,
               })
 
               if (messagesToDeliver.length !== 0) {
@@ -311,9 +303,11 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
    */
   public async takeFromQueue(options: TakeFromQueueOptions): Promise<QueuedMessage[]> {
     const { connectionId, limit, deleteMessages, recipientDid } = options
+    if (!this.messagesCollection) throw new Error('messagesCollection is not defined')
     this.logger?.info(`[takeFromQueue] Initializing method for ConnectionId: ${connectionId}, Limit: ${limit}`)
 
     try {
+      const authorizedRecipient = await this.isRegisteredRecipient(connectionId, recipientDid)
       // If deleteMessages is true, delete and return matched messages in a single
       // statement - running a SELECT first and a separate DELETE afterwards (as before)
       // queried the table twice and could return rows that a concurrent call had
@@ -324,14 +318,15 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
         WHERE id IN (
           SELECT id
           FROM queued_message
-          WHERE (connection_id = $1 OR recipient_dids @> ARRAY[$2]::text[])
+          WHERE (connection_id = $1 OR ($4 AND recipient_dids @> ARRAY[$2]::text[]))
+            AND ($2::text IS NULL OR recipient_dids @> ARRAY[$2]::text[])
             AND state = 'pending'
           ORDER BY created_at
           LIMIT $3
         )
         RETURNING id, encrypted_message, state, created_at;
       `
-        const params = [connectionId, recipientDid, limit ?? null]
+        const params = [connectionId, recipientDid ?? null, limit ?? null, authorizedRecipient]
         const result = await this.messagesCollection?.query(query, params)
 
         if (!result || result.rows.length === 0) {
@@ -354,18 +349,19 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
       // Use UPDATE and RETURNING to fetch and update messages in one step
       const query = `
       UPDATE queued_message
-      SET state = 'sending'
+      SET state = 'sending', connection_id = $1
       WHERE id IN (
         SELECT id 
         FROM queued_message 
-        WHERE (connection_id = $1 OR recipient_dids @> ARRAY[$2]::text[]) 
+        WHERE (connection_id = $1 OR ($4 AND recipient_dids @> ARRAY[$2]::text[]))
+          AND ($2::text IS NULL OR recipient_dids @> ARRAY[$2]::text[])
         AND state = 'pending' 
         ORDER BY created_at 
         LIMIT $3
-      )
+      ) AND state = 'pending'
       RETURNING id, encrypted_message, state, created_at;
     `
-      const params = [connectionId, recipientDid, limit ?? null]
+      const params = [connectionId, recipientDid ?? null, limit ?? null, authorizedRecipient]
       const result = await this.messagesCollection?.query(query, params)
 
       if (!result || result.rows.length === 0) {
@@ -384,7 +380,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
       }))
     } catch (error) {
       this.logger?.error(`[takeFromQueue] Error: ${error}`)
-      return []
+      throw error
     }
   }
 
@@ -396,17 +392,21 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
    * @returns {Promise<number>} A promise resolving to the count of available messages.
    */
   public async getAvailableMessageCount(options: GetAvailableMessageCountOptions): Promise<number> {
-    const { connectionId } = options
+    const { connectionId, recipientDid } = options
+    if (!this.messagesCollection) throw new Error('messagesCollection is not defined')
     this.logger?.debug(`[getAvailableMessageCount] Initializing method for ConnectionId: ${connectionId}`)
 
     try {
+      const authorizedRecipient = await this.isRegisteredRecipient(connectionId, recipientDid)
       // Query to count pending messages for the specified connection ID
       const query = `
       SELECT COUNT(*) AS count 
       FROM queued_message 
-      WHERE connection_id = $1 AND state = 'pending'
+      WHERE (connection_id = $1 OR ($3 AND recipient_dids @> ARRAY[$2]::text[]))
+        AND ($2::text IS NULL OR recipient_dids @> ARRAY[$2]::text[])
+        AND state = 'pending'
     `
-      const params = [connectionId]
+      const params = [connectionId, recipientDid ?? null, authorizedRecipient]
       const result = await this.messagesCollection?.query(query, params)
 
       if (!result || result.rows.length === 0) {
@@ -421,8 +421,21 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
       return numberMessage
     } catch (error) {
       this.logger?.error(`[getAvailableMessageCount] Error while retrieving message count: ${error}`)
-      return 0
+      throw error
     }
+  }
+
+  private async isRegisteredRecipient(connectionId: string, recipientDid?: string): Promise<boolean> {
+    if (!recipientDid || !this.agent || !recipientDid.startsWith('did:key:')) return false
+    const key = DidKey.fromDid(recipientDid).key.publicKeyBase58
+    const repository = this.agent.dependencyManager.resolve(MediationRepository)
+    const registration = await repository.findSingleByQuery(this.agent.context, {
+      connectionId,
+      recipientKeys: [key],
+      role: MediationRole.Mediator,
+      state: MediationState.Granted,
+    })
+    return Boolean(registration)
   }
 
   /**
