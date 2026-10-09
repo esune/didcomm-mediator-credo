@@ -54,15 +54,20 @@ export class PushNotificationsFcmService {
     })
 
     if (pushNotificationsFcmRecord) {
-      if (pushNotificationsFcmRecord.deviceToken === message.deviceToken) {
+      if (
+        pushNotificationsFcmRecord.deviceToken === message.deviceToken &&
+        pushNotificationsFcmRecord.devicePlatform === message.devicePlatform
+      ) {
         this.logger.debug(`Device token is same for connection ${connection.id}. So skipping update`)
         return
       }
 
       // Update the record with new device token
+      const tokenChanged = pushNotificationsFcmRecord.deviceToken !== message.deviceToken
       pushNotificationsFcmRecord.deviceToken = message.deviceToken
+      pushNotificationsFcmRecord.devicePlatform = message.devicePlatform
       // Reset project in case the firebase project might have changed
-      pushNotificationsFcmRecord.firebaseProjectId = undefined
+      if (tokenChanged || message.deviceToken === null) pushNotificationsFcmRecord.firebaseProjectId = undefined
 
       this.logger.debug(`Device token changed for connection ${connection.id}. Updating record`)
       await this.pushNotificationsFcmRepository.update(agentContext, pushNotificationsFcmRecord)

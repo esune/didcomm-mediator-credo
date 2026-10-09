@@ -18,12 +18,14 @@ describe('sendFcmPushNotification', () => {
 
   const mockRepository = {
     update: vi.fn(),
+    findById: vi.fn(),
   }
 
   const agentContext = {} as any
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockRepository.findById.mockResolvedValue({ deviceToken: 'abc', firebaseProjectId: undefined })
 
     // Reset firebaseApps map
     firebaseApps.clear()
@@ -82,7 +84,7 @@ describe('sendFcmPushNotification', () => {
 
     const record = {
       deviceToken: 'abc',
-      firebaseProjectId: 'proj1',
+      firebaseProjectId: undefined,
     } as any
 
     const result = await sendFcmPushNotification(agentContext, mockRepository as any, record, mockLogger as any)
