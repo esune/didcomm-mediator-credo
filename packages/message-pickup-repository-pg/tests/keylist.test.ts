@@ -8,11 +8,18 @@ vi.mock('pg', () => ({
   Pool: class {
     query = query
     end = vi.fn()
+      on = vi.fn()
+      connect = vi.fn().mockResolvedValue({
+        query: vi.fn().mockResolvedValue({ rows: [{ acquired: false }] }),
+        release: vi.fn(),
+      })
   },
 }))
 vi.mock('pg-pubsub', () => ({
   default: class {
     addChannel = vi.fn()
+      on = vi.fn()
+      close = vi.fn()
   },
 }))
 vi.mock('../src/utils/buildPgDatabaseWithMigrations', () => ({ buildPgDatabaseWithMigrations: vi.fn() }))
