@@ -3,8 +3,8 @@
   "version": "0.0.0",
   "description": "Credo mediator agent",
   "private": true,
-  "main": "build/index",
-  "types": "build/index",
+  "main": "build/apps/mediator/src/index",
+  "types": "build/apps/mediator/src/index",
   "files": ["build"],
   "repository": {
     "type": "git",
@@ -12,10 +12,10 @@
   },
   "packageManager": "pnpm@9.15.3+sha256.c1da43727ccbc1ed42aff4fd6bdb4b1e91e65a818e6efff5b240fbf070ba4eaf",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('../../packages/message-pickup-repository-pg/src/migrations', 'build/packages/message-pickup-repository-pg/src/migrations', { recursive: true })\"",
     "prepublishOnly": "pnpm build",
     "dev": "ts-node dev.ts",
-    "start": "NODE_ENV=production node build/index.js"
+    "start": "NODE_ENV=production node build/apps/mediator/src/index.js"
   },
   "dependencies": {
     "@credo-ts/askar": "v0.5.19",
@@ -28,6 +28,8 @@
     "express": "^4.21.2",
     "firebase-admin": "^13.0.2",
     "nconf": "^0.12.1",
+    "pg": "^8.11.3",
+    "pg-pubsub": "^0.8.1",
     "tslog": "^3.3.3",
     "tsyringe": "^4.8.0",
     "ws": "^8.17.1"
