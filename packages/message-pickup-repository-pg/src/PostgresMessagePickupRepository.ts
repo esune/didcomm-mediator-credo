@@ -622,6 +622,25 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
        WHERE message.id = expired_deliveries.id`,
       [this.deliveryLeaseSeconds, this.recoveryBatchSize]
     )
+    const activeRecipients = await this.messagesCollection.query(
+      `SELECT DISTINCT session.connection_id
+       FROM live_session AS session
+       WHERE session.expires_at > now()
+         AND EXISTS (
+           SELECT 1 FROM queued_message AS message
+           WHERE message.connection_id = session.connection_id::uuid AND message.state = 'pending'
+         )
+       LIMIT $1`,
+      [this.recoveryBatchSize]
+    )
+    for (const recipient of activeRecipients.rows) {
+      try {
+        await this.pubSubInstance.publish('newMessage', recipient.connection_id)
+      } catch (error) {
+        this.logger?.error('[recovery] Failed to notify a live recipient; retrying next interval', { cause: error })
+        break
+      }
+    }
     return result.rowCount ?? 0
   }
 

@@ -117,4 +117,24 @@ describe.skipIf(!connectionString)('PostgreSQL delivery recovery', () => {
     expect(() => new PostgresMessagePickupRepository({ ...options, deliveryLeaseSeconds: 0 })).toThrow()
     expect(() => new PostgresMessagePickupRepository({ ...options, recoveryBatchSize: 1.5 })).toThrow()
   })
+
+  it('replays missed live wakeups even when no sending lease expires', async () => {
+    const id = await insert(0)
+    await pool.query("UPDATE queued_message SET state = 'pending' WHERE id = $1", [id])
+    const owner = (await pool.query('SELECT connection_id FROM queued_message WHERE id = $1', [id])).rows[0]
+      .connection_id
+    await pool.query(
+      "INSERT INTO live_session (session_id, connection_id, protocol_version, instance, expires_at) VALUES ($1, $2, 'v2', 'remote', now() + interval '10 minutes')",
+      [randomUUID(), owner]
+    )
+    const publish = vi.fn().mockRejectedValueOnce(new Error('listener outage')).mockResolvedValue(undefined)
+    Object.assign(repository, { pubSubInstance: { publish } })
+
+    expect(await (repository as any).recoverExpiredDeliveries()).toBe(0)
+    expect(await (repository as any).recoverExpiredDeliveries()).toBe(0)
+
+    expect(publish).toHaveBeenCalledTimes(2)
+    expect(publish).toHaveBeenCalledWith('newMessage', owner)
+    expect((await pool.query('SELECT state FROM queued_message WHERE id = $1', [id])).rows[0].state).toBe('pending')
+  })
 })
