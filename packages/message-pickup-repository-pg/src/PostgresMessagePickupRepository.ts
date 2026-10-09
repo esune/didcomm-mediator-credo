@@ -64,9 +64,16 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
     // Initialize Pub/Sub instance if database listener is enabled
     this.logger?.debug('[initialize] Initializing pubSubInstance')
-    this.pubSubInstance = new PGPubsub(
-      `postgres://${postgresUser}:${postgresPassword}@${postgresHost}/${postgresDatabaseName}`
-    )
+    this.pubSubInstance = new PGPubsub({
+      user: this.postgresUser,
+      password: this.postgresPassword,
+      host: this.postgresHost,
+      database: this.postgresDatabaseName,
+      port: 5432,
+    })
+    this.pubSubInstance.on('error', (error: Error) => {
+      this.logger?.error('[pubsub] Background PostgreSQL listener error', { cause: error })
+    })
   }
 
   /**
@@ -100,6 +107,9 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
         host: this.postgresHost,
         database: this.postgresDatabaseName,
         port: 5432,
+      })
+      this.messagesCollection.on('error', (error: Error) => {
+        this.logger?.error('[pool] Background PostgreSQL connection error', { cause: error })
       })
 
       // Initialize Listener PUB/SUB
