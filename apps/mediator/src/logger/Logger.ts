@@ -3,6 +3,24 @@ import { Logger as TSLogger } from 'tslog'
 
 import { replaceError } from './replaceError'
 
+export function parseLogLevel(value?: string | number): LogLevel {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : value
+  const level =
+    typeof normalized === 'string' && Number.isNaN(Number(normalized))
+      ? LogLevel[normalized as keyof typeof LogLevel]
+      : Number(normalized ?? LogLevel.debug)
+  if (
+    normalized === '' ||
+    typeof level !== 'number' ||
+    !Number.isInteger(level) ||
+    level < LogLevel.test ||
+    level > LogLevel.off
+  ) {
+    throw new Error('LOG_LEVEL must be a level name or integer between 0 and 7')
+  }
+  return level
+}
+
 export class Logger extends BaseLogger {
   private logger: TSLogger
 

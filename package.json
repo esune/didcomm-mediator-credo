@@ -6,7 +6,7 @@
     "url": "https://github.com/openwallet-foundation/didcomm-mediator-credo"
   },
   "scripts": {
-    "types:check": "tsc --noEmit",
+    "types:check": "node apps/mediator/node_modules/typescript/bin/tsc --noEmit",
     "style:check": "biome check --unsafe",
     "style:fix": "biome check --write --unsafe",
     "build:all": "pnpm -r build",

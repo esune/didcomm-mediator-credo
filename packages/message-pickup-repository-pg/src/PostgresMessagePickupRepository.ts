@@ -27,7 +27,7 @@ import {
   MessagePickupSessionRole,
 } from '@credo-ts/core/build/modules/message-pickup/MessagePickupSession'
 import { MessageForwardingStrategy } from '@credo-ts/core/build/modules/routing/MessageForwardingStrategy'
-import { Pool } from 'pg'
+import { Pool, type PoolConfig } from 'pg'
 import PGPubsub from 'pg-pubsub'
 import {
   ExtendedMessagePickupSession,
@@ -36,6 +36,7 @@ import {
   PostgresMessagePickupRepositoryConfig,
 } from './interfaces'
 import { buildPgDatabaseWithMigrations } from './utils/buildPgDatabaseWithMigrations'
+import { postgresConnectionConfig } from './utils/postgresConnectionConfig'
 
 @injectable()
 export class PostgresMessagePickupRepository implements MessagePickupRepository {
@@ -48,6 +49,8 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
   private postgresPassword: string
   private postgresHost: string
   private postgresDatabaseName: string
+  private readonly connectionConfig: PoolConfig
+  private readonly maxPickupBatchSize: number
 
   public constructor(options: PostgresMessagePickupRepositoryConfig) {
     const { logger, postgresUser, postgresPassword, postgresHost, postgresDatabaseName } = options
@@ -57,6 +60,11 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
     this.postgresPassword = postgresPassword
     this.postgresHost = postgresHost
     this.postgresDatabaseName = postgresDatabaseName || 'messagepickuprepository'
+    this.connectionConfig = postgresConnectionConfig(options)
+    this.maxPickupBatchSize = options.maxPickupBatchSize ?? 100
+    if (!Number.isSafeInteger(this.maxPickupBatchSize) || this.maxPickupBatchSize < 1 || this.maxPickupBatchSize > 10000) {
+      throw new Error('maxPickupBatchSize must be an integer between 1 and 10000')
+    }
 
     // Initialize instanceName
     this.instanceName = `${os.hostname()}-${process.pid}-${randomUUID()}`
@@ -64,9 +72,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
 
     // Initialize Pub/Sub instance if database listener is enabled
     this.logger?.debug('[initialize] Initializing pubSubInstance')
-    this.pubSubInstance = new PGPubsub(
-      `postgres://${postgresUser}:${postgresPassword}@${postgresHost}/${postgresDatabaseName}`
-    )
+    this.pubSubInstance = new PGPubsub(this.connectionConfig)
   }
 
   /**
@@ -88,19 +94,14 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
           user: this.postgresUser,
           password: this.postgresPassword,
           host: this.postgresHost,
+          port: this.connectionConfig.port,
         },
         this.postgresDatabaseName
       )
       this.logger?.info('[initialize] The database has been build successfully')
 
       // Configure PostgreSQL pool for the messages collections
-      this.messagesCollection = new Pool({
-        user: this.postgresUser,
-        password: this.postgresPassword,
-        host: this.postgresHost,
-        database: this.postgresDatabaseName,
-        port: 5432,
-      })
+      this.messagesCollection = new Pool(this.connectionConfig)
 
       // Initialize Listener PUB/SUB
       await this.initializeMessageListener('newMessage')
@@ -311,6 +312,10 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
    */
   public async takeFromQueue(options: TakeFromQueueOptions): Promise<QueuedMessage[]> {
     const { connectionId, limit, deleteMessages, recipientDid } = options
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 0)) {
+      throw new Error('Pickup limit must be a non-negative integer')
+    }
+    const boundedLimit = Math.min(limit ?? this.maxPickupBatchSize, this.maxPickupBatchSize)
     this.logger?.info(`[takeFromQueue] Initializing method for ConnectionId: ${connectionId}, Limit: ${limit}`)
 
     try {
@@ -331,7 +336,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
         )
         RETURNING id, encrypted_message, state, created_at;
       `
-        const params = [connectionId, recipientDid, limit ?? null]
+        const params = [connectionId, recipientDid, boundedLimit]
         const result = await this.messagesCollection?.query(query, params)
 
         if (!result || result.rows.length === 0) {
@@ -365,7 +370,7 @@ export class PostgresMessagePickupRepository implements MessagePickupRepository 
       )
       RETURNING id, encrypted_message, state, created_at;
     `
-      const params = [connectionId, recipientDid, limit ?? null]
+      const params = [connectionId, recipientDid, boundedLimit]
       const result = await this.messagesCollection?.query(query, params)
 
       if (!result || result.rows.length === 0) {

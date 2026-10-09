@@ -52,6 +52,11 @@ export class PostgresPickupLoader extends PickupLoader {
       postgresUser: databaseConfig.user,
       postgresPassword: databaseConfig.password,
       postgresDatabaseName: databaseConfig.databaseName,
+      postgresPort: this.pickupConfig.postgresPort,
+      postgresMaxConnections: this.pickupConfig.postgresMaxConnections,
+      postgresConnectionTimeoutMillis: this.pickupConfig.postgresConnectionTimeoutMillis,
+      postgresStatementTimeoutMillis: this.pickupConfig.postgresStatementTimeoutMillis,
+      maxPickupBatchSize: this.pickupConfig.maxPickupBatchSize,
       logger: logger,
     })
     return messagePickupRepository

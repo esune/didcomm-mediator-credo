@@ -72,6 +72,14 @@ const messageRepository = new PostgresMessagePickupRepository({
 
 ### Initializing the Repository
 
+Connection controls can be passed to the constructor or the mediator's `PICKUP_SETTINGS`:
+`postgresPort` (default `5432`), `postgresMaxConnections` (`10`),
+`postgresConnectionTimeoutMillis` (`10000`), and `postgresStatementTimeoutMillis` (`30000`).
+Setting either timeout to `0` disables it. Timeouts apply to the queue pool and Pub/Sub connection, not migration DDL.
+Pickup batches are capped by `maxPickupBatchSize` (default `100`); larger client requests receive smaller batches.
+Wallet PostgreSQL storage separately accepts `POSTGRES_MAX_CONNECTIONS` and `POSTGRES_IDLE_TIMEOUT`;
+when unset, native Askar defaults remain unchanged.
+
 To start using the `PostgresMessagePickupRepository`, initialize it with an agent and a callback function for retrieving connection information.
 
 This callback must return another callback function that will be called by `PostgresMessagePickupRepository` when it determines that a Push Notification must be sent. It is a generic approach that makes you free to implement the Push notification service you want.

@@ -1,8 +1,8 @@
 import path from 'node:path'
-import { LogLevel } from '@credo-ts/core'
 import { MessageForwardingStrategy } from '@credo-ts/core/build/modules/routing/MessageForwardingStrategy'
 import dotenv from 'dotenv'
 import nconf from 'nconf'
+import { parseLogLevel } from './logger/Logger'
 
 const dirName = __dirname
 const configFileName = 'config.json'
@@ -19,6 +19,13 @@ if (env === 'development') {
  */
 
 const agentPort = Number(process.env.AGENT_PORT ?? 3110)
+const optionalPositiveInteger = (name: string) => {
+  const raw = process.env[name]
+  if (raw === undefined) return undefined
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive integer`)
+  return value
+}
 
 type FirebaseConfigObject = {
   projectId: string
@@ -34,6 +41,8 @@ nconf.overrides({
     password: process.env.POSTGRES_PASSWORD,
     adminUser: process.env.POSTGRES_ADMIN_USER,
     adminPassword: process.env.POSTGRES_ADMIN_PASSWORD,
+    maxConnections: optionalPositiveInteger('POSTGRES_MAX_CONNECTIONS'),
+    idleTimeout: optionalPositiveInteger('POSTGRES_IDLE_TIMEOUT'),
   },
   agent: {
     port: agentPort,
@@ -44,7 +53,7 @@ nconf.overrides({
     invitationUrl: process.env.INVITATION_URL,
     recreateInvitation: process.env.CREATE_NEW_INVITATION === 'true',
     goalCode: process.env.GOAL_CODE ?? 'mediator',
-    logLevel: process.env.LOG_LEVEL ?? LogLevel.debug,
+    logLevel: parseLogLevel(process.env.LOG_LEVEL),
     usePushNotifications: process.env.USE_PUSH_NOTIFICATIONS === 'true',
     notificationWebhookUrl: process.env.NOTIFICATION_WEBHOOK_URL,
     pushNotificationTitle: process.env.PUSH_NOTIFICATION_TITLE,

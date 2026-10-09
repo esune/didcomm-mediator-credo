@@ -12,6 +12,11 @@ type PickupConfig = {
   postgresUser?: string
   postgresPassword?: string
   postgresDatabaseName?: string
+  postgresPort?: number
+  postgresMaxConnections?: number
+  postgresConnectionTimeoutMillis?: number
+  postgresStatementTimeoutMillis?: number
+  maxPickupBatchSize?: number
 }
 
 export abstract class PickupLoader {

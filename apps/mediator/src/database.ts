@@ -8,6 +8,8 @@ export const askarPostgresConfig: AskarWalletPostgresStorageConfig = {
   config: {
     host: config.get('db:host') as string,
     connectTimeout: 10,
+    maxConnections: config.get('db:maxConnections') as number | undefined,
+    idleTimeout: config.get('db:idleTimeout') as number | undefined,
   },
   credentials: {
     account: config.get('db:user') as string,
