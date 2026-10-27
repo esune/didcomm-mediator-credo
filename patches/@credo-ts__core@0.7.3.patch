@@ -1,0 +1,87 @@
+diff --git a/build/modules/dids/repository/DidRepository.mjs b/build/modules/dids/repository/DidRepository.mjs
+index 1bc39c29c13d2d1ede7c8067b9825fb526874d8b..24d7931933166a4963a8d3b24f981f902e9e9303 100644
+--- a/build/modules/dids/repository/DidRepository.mjs
++++ b/build/modules/dids/repository/DidRepository.mjs
+@@ -6,6 +6,7 @@ import "../../kms/index.mjs";
+ import __decorateParam from "../../../_virtual/_@oxc-project_runtime@0.151.0/helpers/esm/decorateParam.mjs";
+ import { EventEmitter } from "../../../agent/EventEmitter.mjs";
+ import { Repository } from "../../../storage/Repository.mjs";
++import { RecordDuplicateError } from "../../../error/RecordDuplicateError.mjs";
+ import "../domain/DidDocumentRole.mjs";
+ import { DidRecord } from "./DidRecord.mjs";
+ //#region src/modules/dids/repository/DidRepository.ts
+@@ -18,44 +19,52 @@ let DidRepository = class DidRepository extends Repository {
+ 	* To find a {@link DidRecord} that was created by this agent, use {@link DidRepository.findCreatedDidByRecipientKey}.
+ 	*/
+ 	findReceivedDidByRecipientKey(agentContext, recipientKey) {
+-		return this.findSingleByQuery(agentContext, {
+-			recipientKeyFingerprints: [recipientKey.fingerprint],
+-			role: "received"
+-		});
++		return this.findSingleByRecipientKeyAndRole(agentContext, recipientKey, "received");
+ 	}
+ 	/**
+ 	* Finds a {@link DidRecord}, containing the specified recipientKey that was created by this agent.
+ 	* To find a {@link DidRecord} that was received by this agent, use {@link DidRepository.findReceivedDidByRecipientKey}.
+ 	*/
+ 	findCreatedDidByRecipientKey(agentContext, recipientKey) {
+-		return this.findSingleByQuery(agentContext, {
+-			recipientKeyFingerprints: [recipientKey.fingerprint],
+-			role: "created"
+-		});
++		return this.findSingleByRecipientKeyAndRole(agentContext, recipientKey, "created");
++	}
++	// The role tag matches about half of all did records, so it is filtered in memory instead of in the tag query
++	async findSingleByRecipientKeyAndRole(agentContext, recipientKey, role) {
++		const records = (await this.findByQuery(agentContext, { recipientKeyFingerprints: [recipientKey.fingerprint] })).filter((record) => record.role === role);
++		return this.assertSingle(records, { recipientKeyFingerprints: [recipientKey.fingerprint], role });
++	}
++	// A $or across a scalar and an array tag can't use the tag indexes, so each side is queried separately
++	async findByDidOrAlternativeDid(agentContext, did, query = {}) {
++		const byDid = await this.findByQuery(agentContext, { ...query, did });
++		const byAlternativeDid = await this.findByQuery(agentContext, { ...query, alternativeDids: [did] });
++		return [...new Map([...byDid, ...byAlternativeDid].map((record) => [record.id, record])).values()];
++	}
++	assertSingle(records, query) {
++		if (records.length > 1) throw new RecordDuplicateError(`Multiple records found for given query '${JSON.stringify(query)}'`, { recordType: this.recordClass.type });
++		return records[0] ?? null;
+ 	}
+ 	findAllByRecipientKey(agentContext, recipientKey) {
+ 		return this.findByQuery(agentContext, { recipientKeyFingerprints: [recipientKey.fingerprint] });
+ 	}
+ 	findAllByDid(agentContext, did) {
+-		return this.findByQuery(agentContext, { $or: [{ alternativeDids: [did] }, { did }] });
++		return this.findByDidOrAlternativeDid(agentContext, did);
+ 	}
+-	findReceivedDid(agentContext, receivedDid) {
+-		return this.findSingleByQuery(agentContext, {
+-			$or: [{ alternativeDids: [receivedDid] }, { did: receivedDid }],
+-			role: "received"
+-		});
++	async findReceivedDid(agentContext, receivedDid) {
++		const records = (await this.findByDidOrAlternativeDid(agentContext, receivedDid)).filter((record) => record.role === "received");
++		return this.assertSingle(records, { did: receivedDid, role: "received" });
+ 	}
+-	findCreatedDid(agentContext, createdDid) {
+-		return this.findSingleByQuery(agentContext, {
+-			$or: [{ alternativeDids: [createdDid] }, { did: createdDid }],
+-			role: "created"
+-		});
++	async findCreatedDid(agentContext, createdDid) {
++		const records = (await this.findByDidOrAlternativeDid(agentContext, createdDid)).filter((record) => record.role === "created");
++		return this.assertSingle(records, { did: createdDid, role: "created" });
+ 	}
+ 	getCreatedDids(agentContext, { method, did }) {
+-		return this.findByQuery(agentContext, {
++		if (!did) return this.findByQuery(agentContext, {
++			role: "created",
++			method
++		});
++		return this.findByDidOrAlternativeDid(agentContext, did, {
+ 			role: "created",
+-			method,
+-			$or: did ? [{ alternativeDids: [did] }, { did }] : void 0
++			method
+ 		});
+ 	}
+ 	async storeCreatedDid(agentContext, { did, didDocument, tags, keys }) {

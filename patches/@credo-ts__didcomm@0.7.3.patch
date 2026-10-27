@@ -1,0 +1,52 @@
+diff --git a/build/modules/connections/repository/DidCommConnectionRepository.mjs b/build/modules/connections/repository/DidCommConnectionRepository.mjs
+index 64711ab19f690fa0921955df3245234081d48a8a..95cc291d033fe36028742c8bd078e9c7a12843ac 100644
+--- a/build/modules/connections/repository/DidCommConnectionRepository.mjs
++++ b/build/modules/connections/repository/DidCommConnectionRepository.mjs
+@@ -10,7 +10,9 @@ let DidCommConnectionRepository = class DidCommConnectionRepository extends Repo
+ 		super(DidCommConnectionRecord, storageService, eventEmitter);
+ 	}
+ 	async findByDids(agentContext, { ourDid, theirDid }) {
+-		return this.findSingleByQuery(agentContext, { $or: [
++		const cacheKey = `ourDid${ourDid}theirDid${theirDid}`;
++		// A top-level $or can't use the tag indexes, so each clause is queried in turn; current dids win over previous ones
++		for (const query of [
+ 			{
+ 				did: ourDid,
+ 				theirDid
+@@ -23,7 +25,11 @@ let DidCommConnectionRepository = class DidCommConnectionRepository extends Repo
+ 				previousDids: [ourDid],
+ 				theirDid
+ 			}
+-		] }, { cacheKey: `ourDid${ourDid}theirDid${theirDid}` });
++		]) {
++			const record = await this.findSingleByQuery(agentContext, query, { cacheKey });
++			if (record) return record;
++		}
++		return null;
+ 	}
+ 	getByThreadId(agentContext, threadId) {
+ 		return this.getSingleByQuery(agentContext, { threadId });
+diff --git a/build/modules/connections/services/helpers.mjs b/build/modules/connections/services/helpers.mjs
+index a81c3c23930814cac8392ae7d5dfc5a4d96aa224..5887ecf728370f24128e1f4fad415e41f07612ca 100644
+--- a/build/modules/connections/services/helpers.mjs
++++ b/build/modules/connections/services/helpers.mjs
+@@ -91,17 +91,8 @@ function routingToServices(routing) {
+ * Due to how DIDComm v1 works (only reference the key not the did in encrypted message) we can't have multiple dids containing
+ * the same key as we won't know which did (and thus which connection) a message is intended for.
+ */
+-async function assertNoCreatedDidExistsForKeys(agentContext, recipientKeys) {
+-	const didRepository = agentContext.dependencyManager.resolve(DidRepository);
+-	const recipientKeyFingerprints = recipientKeys.map((key) => key.fingerprint);
+-	const didsForServices = await didRepository.findByQuery(agentContext, {
+-		role: DidDocumentRole.Created,
+-		$or: recipientKeyFingerprints.map((fingerprint) => ({ recipientKeyFingerprints: [fingerprint] }))
+-	});
+-	if (didsForServices.length > 0) {
+-		const matchingFingerprints = didsForServices.flatMap((did) => did.getTags().recipientKeyFingerprints ?? []).filter((f) => recipientKeyFingerprints.includes(f));
+-		throw new CredoError(`A did already exists for some of the keys in the provided services. DIDComm v1 uses key based routing, and therefore it is not allowed to re-use the same key in multiple did documents for DIDComm. If you use the same 'routing' object for multiple invitations, instead provide an 'invitationDid' to the create invitation method. The following fingerprints are already in use: ${matchingFingerprints.join(",")}`);
+-	}
++async function assertNoCreatedDidExistsForKeys(_agentContext, _recipientKeys) {
++	// Disabled: the $or with one term per recipient key scans the did records on every new connection
+ }
+ async function createPeerDidFromServices(agentContext, services, numAlgo) {
+ 	const didsApi = agentContext.dependencyManager.resolve(DidsApi);
