@@ -7,25 +7,25 @@ settings:
 catalogs:
   default:
     '@credo-ts/askar':
-      specifier: ^0.7.3
+      specifier: 0.7.3
       version: 0.7.3
     '@credo-ts/askar-to-drizzle-storage-migration':
-      specifier: ^0.7.3
+      specifier: 0.7.3
       version: 0.7.3
     '@credo-ts/core':
-      specifier: ^0.7.3
+      specifier: 0.7.3
       version: 0.7.3
     '@credo-ts/didcomm':
-      specifier: ^0.7.3
+      specifier: 0.7.3
       version: 0.7.3
     '@credo-ts/drizzle-storage':
-      specifier: ^0.7.3
+      specifier: 0.7.3
       version: 0.7.3
     '@credo-ts/node':
-      specifier: ^0.7.3
+      specifier: 0.7.3
       version: 0.7.3
     '@credo-ts/redis-cache':
-      specifier: ^0.7.3
+      specifier: 0.7.3
       version: 0.7.3
     '@types/node':
       specifier: ^22.15.17
@@ -46,6 +46,14 @@ catalogs:
 overrides:
   vite: npm:rolldown-vite@^7.2.10
   undici: ^6.29.1
+
+patchedDependencies:
+  '@credo-ts/core@0.7.3':
+    hash: 86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940
+    path: patches/@credo-ts__core@0.7.3.patch
+  '@credo-ts/didcomm@0.7.3':
+    hash: 70b677ba7973ca4fa1c951137352ddb1a4da31a35997ae83189befe3d5b593ef
+    path: patches/@credo-ts__didcomm@0.7.3.patch
 
 importers:
 
@@ -92,10 +100,10 @@ importers:
         version: 0.7.3(@hyperledger/anoncreds-shared@0.4.1)(@openwallet-foundation/askar-shared@0.6.0)(drizzle-orm@0.44.7(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(@types/pg@8.15.6)(pg@8.16.3))(typescript@5.9.3)
       '@credo-ts/core':
         specifier: 'catalog:'
-        version: 0.7.3(typescript@5.9.3)
+        version: 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
       '@credo-ts/didcomm':
         specifier: 'catalog:'
-        version: 0.7.3(typescript@5.9.3)
+        version: 0.7.3(patch_hash=70b677ba7973ca4fa1c951137352ddb1a4da31a35997ae83189befe3d5b593ef)(typescript@5.9.3)
       '@credo-ts/didcomm-push-notifications':
         specifier: workspace:*
         version: link:../../packages/push-notifications
@@ -196,10 +204,10 @@ importers:
         version: 0.7.3(@openwallet-foundation/askar-shared@0.6.0)(typescript@5.9.3)
       '@credo-ts/core':
         specifier: 'catalog:'
-        version: 0.7.3(typescript@5.9.3)
+        version: 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
       '@credo-ts/didcomm':
         specifier: 'catalog:'
-        version: 0.7.3(typescript@5.9.3)
+        version: 0.7.3(patch_hash=70b677ba7973ca4fa1c951137352ddb1a4da31a35997ae83189befe3d5b593ef)(typescript@5.9.3)
       '@types/node':
         specifier: 'catalog:'
         version: 22.19.1
@@ -218,10 +226,10 @@ importers:
     devDependencies:
       '@credo-ts/core':
         specifier: 'catalog:'
-        version: 0.7.3(typescript@5.9.3)
+        version: 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
       '@credo-ts/didcomm':
         specifier: 'catalog:'
-        version: 0.7.3(typescript@5.9.3)
+        version: 0.7.3(patch_hash=70b677ba7973ca4fa1c951137352ddb1a4da31a35997ae83189befe3d5b593ef)(typescript@5.9.3)
       '@types/node':
         specifier: 'catalog:'
         version: 22.19.1
@@ -240,10 +248,10 @@ importers:
     devDependencies:
       '@credo-ts/core':
         specifier: 'catalog:'
-        version: 0.7.3(typescript@5.9.3)
+        version: 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
       '@credo-ts/didcomm':
         specifier: 'catalog:'
-        version: 0.7.3(typescript@5.9.3)
+        version: 0.7.3(patch_hash=70b677ba7973ca4fa1c951137352ddb1a4da31a35997ae83189befe3d5b593ef)(typescript@5.9.3)
       '@types/pg':
         specifier: 'catalog:'
         version: 8.15.6
@@ -1830,7 +1838,6 @@ packages:
 
   '@sphereon/kmp-mdoc-core@0.2.0-SNAPSHOT.26':
     resolution: {integrity: sha512-QXJ6R8ENiZV2rPMbn06cw5JKwqUYN1kzVRbYfONqE1PEXx1noQ4md7uxr2zSczi0ubKkNcbyYDNtIMTZIhGzmQ==}
-    bundledDependencies: []
 
   '@sphereon/pex-models@2.3.2':
     resolution: {integrity: sha512-foFxfLkRwcn/MOp/eht46Q7wsvpQGlO7aowowIIb5Tz9u97kYZ2kz6K2h2ODxWuv5CRA7Q0MY8XUBGE2lfOhOQ==}
@@ -4486,8 +4493,8 @@ snapshots:
 
   '@credo-ts/action-menu@0.7.3(typescript@5.9.3)':
     dependencies:
-      '@credo-ts/core': 0.7.3(typescript@5.9.3)
-      '@credo-ts/didcomm': 0.7.3(typescript@5.9.3)
+      '@credo-ts/core': 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
+      '@credo-ts/didcomm': 0.7.3(patch_hash=70b677ba7973ca4fa1c951137352ddb1a4da31a35997ae83189befe3d5b593ef)(typescript@5.9.3)
       class-transformer: 0.5.1
       class-validator: 0.14.3
       rxjs: 7.8.2
@@ -4499,8 +4506,8 @@ snapshots:
   '@credo-ts/anoncreds@0.7.3(@hyperledger/anoncreds-shared@0.4.1)(typescript@5.9.3)':
     dependencies:
       '@astronautlabs/jsonpath': 1.1.2
-      '@credo-ts/core': 0.7.3(typescript@5.9.3)
-      '@credo-ts/didcomm': 0.7.3(typescript@5.9.3)
+      '@credo-ts/core': 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
+      '@credo-ts/didcomm': 0.7.3(patch_hash=70b677ba7973ca4fa1c951137352ddb1a4da31a35997ae83189befe3d5b593ef)(typescript@5.9.3)
       '@hyperledger/anoncreds-shared': 0.4.1
       '@sphereon/pex-models': 2.3.2
       class-transformer: 0.5.1
@@ -4514,7 +4521,7 @@ snapshots:
   '@credo-ts/askar-to-drizzle-storage-migration@0.7.3(@hyperledger/anoncreds-shared@0.4.1)(@openwallet-foundation/askar-shared@0.6.0)(drizzle-orm@0.44.7(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(@types/pg@8.15.6)(pg@8.16.3))(typescript@5.9.3)':
     dependencies:
       '@credo-ts/askar': 0.7.3(@openwallet-foundation/askar-shared@0.6.0)(typescript@5.9.3)
-      '@credo-ts/core': 0.7.3(typescript@5.9.3)
+      '@credo-ts/core': 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
       '@credo-ts/drizzle-storage': 0.7.3(@hyperledger/anoncreds-shared@0.4.1)(drizzle-orm@0.44.7(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(@types/pg@8.15.6)(pg@8.16.3))(typescript@5.9.3)
       '@credo-ts/tenants': 0.7.3(typescript@5.9.3)
       '@openwallet-foundation/askar-shared': 0.6.0
@@ -4527,7 +4534,7 @@ snapshots:
 
   '@credo-ts/askar@0.7.3(@openwallet-foundation/askar-shared@0.6.0)(typescript@5.9.3)':
     dependencies:
-      '@credo-ts/core': 0.7.3(typescript@5.9.3)
+      '@credo-ts/core': 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
       '@noble/curves': 2.4.0
       '@openwallet-foundation/askar-shared': 0.6.0
       '@panva/hpke-noble': 1.1.7(hpke@1.1.7)
@@ -4541,7 +4548,7 @@ snapshots:
       - supports-color
       - typescript
 
-  '@credo-ts/core@0.7.3(typescript@5.9.3)':
+  '@credo-ts/core@0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)':
     dependencies:
       '@animo-id/pex': 6.1.1
       '@astronautlabs/jsonpath': 1.1.2
@@ -4590,9 +4597,9 @@ snapshots:
       - supports-color
       - typescript
 
-  '@credo-ts/didcomm@0.7.3(typescript@5.9.3)':
+  '@credo-ts/didcomm@0.7.3(patch_hash=70b677ba7973ca4fa1c951137352ddb1a4da31a35997ae83189befe3d5b593ef)(typescript@5.9.3)':
     dependencies:
-      '@credo-ts/core': 0.7.3(typescript@5.9.3)
+      '@credo-ts/core': 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
       class-transformer: 0.5.1
       class-validator: 0.14.3
       luxon: 3.7.2
@@ -4607,8 +4614,8 @@ snapshots:
     dependencies:
       '@credo-ts/action-menu': 0.7.3(typescript@5.9.3)
       '@credo-ts/anoncreds': 0.7.3(@hyperledger/anoncreds-shared@0.4.1)(typescript@5.9.3)
-      '@credo-ts/core': 0.7.3(typescript@5.9.3)
-      '@credo-ts/didcomm': 0.7.3(typescript@5.9.3)
+      '@credo-ts/core': 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
+      '@credo-ts/didcomm': 0.7.3(patch_hash=70b677ba7973ca4fa1c951137352ddb1a4da31a35997ae83189befe3d5b593ef)(typescript@5.9.3)
       '@credo-ts/drpc': 0.7.3(typescript@5.9.3)
       '@credo-ts/openid4vc': 0.7.3(typescript@5.9.3)
       '@credo-ts/question-answer': 0.7.3(typescript@5.9.3)
@@ -4628,8 +4635,8 @@ snapshots:
 
   '@credo-ts/drpc@0.7.3(typescript@5.9.3)':
     dependencies:
-      '@credo-ts/core': 0.7.3(typescript@5.9.3)
-      '@credo-ts/didcomm': 0.7.3(typescript@5.9.3)
+      '@credo-ts/core': 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
+      '@credo-ts/didcomm': 0.7.3(patch_hash=70b677ba7973ca4fa1c951137352ddb1a4da31a35997ae83189befe3d5b593ef)(typescript@5.9.3)
       class-transformer: 0.5.1
       class-validator: 0.14.3
     transitivePeerDependencies:
@@ -4639,8 +4646,8 @@ snapshots:
 
   '@credo-ts/node@0.7.3(typescript@5.9.3)':
     dependencies:
-      '@credo-ts/core': 0.7.3(typescript@5.9.3)
-      '@credo-ts/didcomm': 0.7.3(typescript@5.9.3)
+      '@credo-ts/core': 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
+      '@credo-ts/didcomm': 0.7.3(patch_hash=70b677ba7973ca4fa1c951137352ddb1a4da31a35997ae83189befe3d5b593ef)(typescript@5.9.3)
       '@types/express': 5.0.6
       '@types/node': 20.19.43
       '@types/ws': 8.18.1
@@ -4657,7 +4664,7 @@ snapshots:
 
   '@credo-ts/openid4vc@0.7.3(typescript@5.9.3)':
     dependencies:
-      '@credo-ts/core': 0.7.3(typescript@5.9.3)
+      '@credo-ts/core': 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
       '@openid4vc/oauth2': 0.6.0
       '@openid4vc/openid4vci': 0.6.0
       '@openid4vc/openid4vp': 0.6.0
@@ -4674,8 +4681,8 @@ snapshots:
 
   '@credo-ts/question-answer@0.7.3(typescript@5.9.3)':
     dependencies:
-      '@credo-ts/core': 0.7.3(typescript@5.9.3)
-      '@credo-ts/didcomm': 0.7.3(typescript@5.9.3)
+      '@credo-ts/core': 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
+      '@credo-ts/didcomm': 0.7.3(patch_hash=70b677ba7973ca4fa1c951137352ddb1a4da31a35997ae83189befe3d5b593ef)(typescript@5.9.3)
       class-transformer: 0.5.1
       class-validator: 0.14.3
       rxjs: 7.8.2
@@ -4686,7 +4693,7 @@ snapshots:
 
   '@credo-ts/redis-cache@0.7.3(typescript@5.9.3)':
     dependencies:
-      '@credo-ts/core': 0.7.3(typescript@5.9.3)
+      '@credo-ts/core': 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
       ioredis: 5.11.1
     transitivePeerDependencies:
       - encoding
@@ -4695,8 +4702,8 @@ snapshots:
 
   '@credo-ts/tenants@0.7.3(typescript@5.9.3)':
     dependencies:
-      '@credo-ts/core': 0.7.3(typescript@5.9.3)
-      '@credo-ts/didcomm': 0.7.3(typescript@5.9.3)
+      '@credo-ts/core': 0.7.3(patch_hash=86d59a386000c24a008d11ffac64fdda7f69dc62d601cdd03e5bb3dd126e6940)(typescript@5.9.3)
+      '@credo-ts/didcomm': 0.7.3(patch_hash=70b677ba7973ca4fa1c951137352ddb1a4da31a35997ae83189befe3d5b593ef)(typescript@5.9.3)
       async-mutex: 0.5.0
     transitivePeerDependencies:
       - encoding
