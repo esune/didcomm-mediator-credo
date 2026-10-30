@@ -86,9 +86,56 @@ describe('migrations', () => {
   })
 
   test('messages a live-mode-postgres instance left in sending get an ack timeout', async () => {
+    const messages = await withClient(liveModePostgresDatabase, (client) =>
+      client.query('SELECT id FROM queued_message')
+    )
+    expect(messages.rowCount).toBe(1)
     const stuck = await withClient(liveModePostgresDatabase, (client) =>
       client.query(`SELECT 1 FROM queued_message WHERE state = 'sending' AND sending_since IS NULL`)
     )
     expect(stuck.rowCount).toBe(0)
   })
+
+  test('concurrent replicas migrate a fresh schema once', async () => {
+    const database = uniqueDatabaseName('tq_migrations_concurrent')
+    await withClient(undefined, (client) => client.query(`CREATE DATABASE ${database}`))
+    try {
+      await Promise.all(
+        Array.from({ length: 3 }, () => buildPgDatabaseWithMigrations(undefined, postgresConfig, database))
+      )
+      const schema = await describeSchema(database)
+      expect(schema).toEqual(await describeSchema(ourDatabase))
+      const versions = await withClient(database, (client) =>
+        client.query('SELECT version, count(*)::int AS count FROM schema_version GROUP BY version ORDER BY version')
+      )
+      expect(versions.rows).toEqual([1, 2, 3, 4, 5].map((version) => ({ version, count: 1 })))
+    } finally {
+      await dropDatabase(database)
+    }
+  }, 30_000)
+
+  test('an inaccessible legacy schema fails instead of reporting migration success', async () => {
+    const database = uniqueDatabaseName('tq_migrations_permissions')
+    const role = uniqueDatabaseName('tq_migrations_user')
+    const password = uniqueDatabaseName('password')
+    await withClient(undefined, async (client) => {
+      await client.query(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`)
+      await client.query(`CREATE DATABASE ${database}`)
+    })
+    try {
+      await withClient(database, (client) =>
+        client.query('CREATE TABLE schema_version (id SERIAL PRIMARY KEY, version INTEGER NOT NULL)')
+      )
+      await expect(
+        buildPgDatabaseWithMigrations(undefined, { ...postgresConfig, user: role, password }, database)
+      ).rejects.toThrow('permission denied')
+      const schema = await withClient(database, (client) =>
+        client.query("SELECT to_regclass('public.instance') AS name")
+      )
+      expect(schema.rows[0].name).toBeNull()
+    } finally {
+      await dropDatabase(database)
+      await withClient(undefined, (client) => client.query(`DROP ROLE ${role}`))
+    }
+  }, 30_000)
 })

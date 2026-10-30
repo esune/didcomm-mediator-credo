@@ -2,6 +2,7 @@ import { Agent, AgentContext, BaseEvent, ConsoleLogger, EventEmitter, LogLevel }
 import { DidCommMessagePickupApi, DidCommMessagePickupEventTypes } from '@credo-ts/didcomm'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { DidCommTransportQueuePostgres, PostgresMessagesPendingEventType } from '../src/index.js'
+import { buildPgDatabaseWithMigrations } from '../src/utils/buildPgDatabaseWithMigrations.js'
 
 type QueryResult = { rows: Record<string, unknown>[]; rowCount: number }
 type QueryHandler = (sql: string, params?: unknown[]) => QueryResult | undefined
@@ -48,7 +49,9 @@ vi.mock('pg-pubsub', () => ({
   },
 }))
 
-vi.mock('../src/utils/buildPgDatabaseWithMigrations.js', () => ({ buildPgDatabaseWithMigrations: async () => {} }))
+vi.mock('../src/utils/buildPgDatabaseWithMigrations.js', () => ({
+  buildPgDatabaseWithMigrations: vi.fn().mockResolvedValue(undefined),
+}))
 
 const connectionId = '8a1f0c55-2b7e-4c1c-9e34-3f5b2a7d9e01'
 const session = { id: 'session-1', connectionId, protocolVersion: 'v2', role: 'MessageHolder' }
@@ -72,6 +75,7 @@ describe('DidCommTransportQueuePostgres delivery guarantees', () => {
     sql.includes('pg_try_advisory_lock') ? { rows: [{ pg_try_advisory_lock: true }], rowCount: 1 } : undefined
 
   beforeEach(() => {
+    vi.mocked(buildPgDatabaseWithMigrations).mockReset().mockResolvedValue(undefined)
     db.pool.length = 0
     db.client.length = 0
     db.poolQueries.length = 0
@@ -111,6 +115,20 @@ describe('DidCommTransportQueuePostgres delivery guarantees', () => {
 
   afterEach(async () => {
     await queue.shutdown(agentContext)
+  })
+
+  test('migration failure stops initialization before listeners, timers or runtime queries start', async () => {
+    const timer = vi.spyOn(globalThis, 'setInterval')
+    try {
+      vi.mocked(buildPgDatabaseWithMigrations).mockRejectedValueOnce(new Error('permission denied for schema_version'))
+      await expect(queue.initialize(agent)).rejects.toThrow('permission denied for schema_version')
+      expect(db.listeners.size).toBe(0)
+      expect(db.poolQueries).toEqual([])
+      expect(agentHandlers.size).toBe(0)
+      expect(timer).not.toHaveBeenCalled()
+    } finally {
+      timer.mockRestore()
+    }
   })
 
   test('a failed live delivery in the pub/sub listener does not reject', async () => {

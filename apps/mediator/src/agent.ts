@@ -1,5 +1,5 @@
 import type { Socket } from 'node:net'
-import { AskarModule, AskarStoreDuplicateError } from '@credo-ts/askar'
+import { AskarModule } from '@credo-ts/askar'
 import { Agent } from '@credo-ts/core'
 import {
   DidCommHttpOutboundTransport,
@@ -16,6 +16,7 @@ import Redis from 'ioredis'
 import { WebSocketServer } from 'ws'
 import { loadAskar } from './config/askarLoader.js'
 import { loadCacheStorage } from './config/cacheLoader.js'
+import { initializeAskarStore } from './config/initializeAskarStore.js'
 import { ExtendedQueueTransportRepository, loadMessagePickupStorage } from './config/messagePickupLoader.js'
 import { loadPushNotificationSender } from './config/pushNotificationLoader.js'
 import { loadRedisMessageDelivery } from './config/redisMessageDeliveryLoader.js'
@@ -125,18 +126,7 @@ export async function createAgent() {
     return res.send(outOfBandRecord.outOfBandInvitation.toJSON())
   })
 
-  try {
-    await agent.modules.askar.provisionStore()
-    agent.config.logger.info('Provisioned store')
-  } catch (error) {
-    if (error instanceof AskarStoreDuplicateError) {
-      agent.config.logger.info('Store already exists')
-    } else {
-      agent.config.logger.error('Error provisioning store', {
-        error,
-      })
-    }
-  }
+  await initializeAskarStore(agent.modules.askar, agent.config.logger)
 
   // Optionally initialize queue transport repository
   // TODO: We should refactor this so it's handled by the agent.initialize (using a module?)
